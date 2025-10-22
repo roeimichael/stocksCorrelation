@@ -8,37 +8,76 @@ from src.core.logger import get_logger
 logger = get_logger()
 
 
-def get_sp500_tickers(top_n: Optional[int] = None) -> List[str]:
+def get_sp500_tickers(top_n: Optional[int] = None, cache_file: str = 'data/sp500_tickers.txt') -> List[str]:
     """
-    Get S&P 500 ticker symbols.
+    Get S&P 500 ticker symbols from Wikipedia or cached file.
 
     Args:
-        top_n: If specified, return only top N tickers by market cap
+        top_n: If specified, return only top N tickers
+        cache_file: Path to cache file for storing tickers
 
     Returns:
         List of ticker symbols
     """
-    # Fetch S&P 500 list from Wikipedia
+    cache_path = Path(cache_file)
+
+    # Try to load from cache file first
+    if cache_path.exists():
+        try:
+            with open(cache_path, 'r') as f:
+                tickers = [line.strip() for line in f if line.strip()]
+            logger.info(f"Loaded {len(tickers)} S&P 500 tickers from cache file: {cache_file}")
+
+            if top_n:
+                tickers = tickers[:top_n]
+                logger.info(f"Using top {top_n} tickers")
+
+            return tickers
+        except Exception as e:
+            logger.warning(f"Error reading cache file: {e}. Will fetch from Wikipedia.")
+
+    # Fetch from Wikipedia if cache doesn't exist or failed to load
+    logger.info("Fetching S&P 500 tickers from Wikipedia...")
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+
     try:
-        tables = pd.read_html(url)
+        # Add headers to avoid 403 Forbidden
+        import requests
+        from io import StringIO
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+
+        tables = pd.read_html(StringIO(response.text))
         sp500_table = tables[0]
         tickers = sp500_table['Symbol'].tolist()
 
         # Clean tickers (remove any special characters that yfinance doesn't like)
         tickers = [ticker.replace('.', '-') for ticker in tickers]
 
-        logger.info(f"Fetched {len(tickers)} S&P 500 tickers")
+        logger.info(f"Fetched {len(tickers)} S&P 500 tickers from Wikipedia")
+
+        # Save to cache file
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, 'w') as f:
+            for ticker in tickers:
+                f.write(f"{ticker}\n")
+
+        logger.info(f"Saved {len(tickers)} tickers to cache file: {cache_file}")
 
         if top_n:
-            # For top_n, we'll just take the first N from the list
-            # In a production system, you'd fetch market cap data and sort
             tickers = tickers[:top_n]
             logger.info(f"Using top {top_n} tickers")
 
         return tickers
+
     except Exception as e:
-        logger.error(f"Error fetching S&P 500 tickers: {e}")
+        logger.error(f"Error fetching S&P 500 tickers from Wikipedia: {e}")
+
         # Fallback to a small set of major tickers
         fallback = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'JPM', 'V', 'WMT']
         logger.warning(f"Using fallback tickers: {fallback}")
@@ -78,6 +117,7 @@ def download_stock_data(
             end=end_date,
             interval=interval,
             progress=False,
+            auto_adjust=False,
             group_by='ticker'
         )
 
@@ -87,7 +127,22 @@ def download_stock_data(
             adj_close = data['Adj Close'].to_frame(ticker)
         else:
             # Extract adjusted close prices
-            adj_close = data.xs('Adj Close', axis=1, level=1)
+            try:
+                adj_close = data.xs('Adj Close', axis=1, level=1)
+            except KeyError:
+                # Handle case where data structure is different (flat columns)
+                adj_close_cols = [col for col in data.columns if 'Adj Close' in str(col)]
+                if adj_close_cols:
+                    adj_close = data[adj_close_cols]
+                    # Clean column names
+                    adj_close.columns = [col[0] if isinstance(col, tuple) else col.replace('Adj Close', '').strip() for col in adj_close.columns]
+                else:
+                    # Fallback: use Close if Adj Close not available
+                    logger.warning("Adj Close not found, using Close prices")
+                    try:
+                        adj_close = data.xs('Close', axis=1, level=1)
+                    except:
+                        adj_close = data[[col for col in data.columns if 'Close' in str(col)]]
 
         # Save raw data
         output_file = output_path / 'adj_close_prices.parquet'
@@ -136,14 +191,28 @@ def get_universe(config: dict) -> List[str]:
     """
     universe_spec = config['data']['universe']
     top_n = config['data'].get('top_n')
+    include_index = config['data'].get('include_index', False)
 
     if universe_spec == 'sp500':
-        return get_sp500_tickers(top_n)
+        tickers = get_sp500_tickers(top_n)
+
+        # Add S&P 500 index if requested
+        if include_index:
+            tickers.append('^GSPC')
+            logger.info("Added S&P 500 index (^GSPC) to universe")
+
+        return tickers
     elif Path(universe_spec).exists():
         # Load from CSV file
         df = pd.read_csv(universe_spec)
         tickers = df['ticker'].tolist() if 'ticker' in df.columns else df.iloc[:, 0].tolist()
         logger.info(f"Loaded {len(tickers)} tickers from {universe_spec}")
+
+        # Add S&P 500 index if requested
+        if include_index and '^GSPC' not in tickers:
+            tickers.append('^GSPC')
+            logger.info("Added S&P 500 index (^GSPC) to universe")
+
         return tickers[:top_n] if top_n else tickers
     else:
         raise ValueError(f"Unknown universe specification: {universe_spec}")

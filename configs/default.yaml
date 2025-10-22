@@ -1,9 +1,10 @@
 data:
-  start: "2023-01-01"
-  end: "2025-10-14"
-  universe: "sp500"          # or path to CSV of tickers
-  top_n: 50
+  start: "2023-10-22"
+  end: "2025-10-22"
+  universe: "sp500"                  # Use all S&P 500 stocks from Wikipedia
+  top_n: null                        # null = use all stocks, or specify a number (e.g., 50)
   interval: "1d"
+  include_index: true                # Include S&P 500 index (^GSPC)
 
 windows:
   length: 10                  # X - window length in days

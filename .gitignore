@@ -10,9 +10,14 @@ __pycache__/
 *.so
 .Python
 
-# Data directories
-data/
+# Data directories (but keep ticker cache file)
+data/raw/
+data/processed/
 results/
+
+# Keep ticker list for reproducibility
+!data/sp500_tickers.txt
+!data/sp500_top50.csv
 
 # IDEs
 .idea/
