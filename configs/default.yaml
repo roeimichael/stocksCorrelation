@@ -1,0 +1,33 @@
+data:
+  start: "2023-01-01"
+  end: "2025-10-14"
+  universe: "sp500"          # or path to CSV of tickers
+  top_n: 50
+  interval: "1d"
+
+windows:
+  length: 10                  # X - window length in days
+  normalization: "zscore"     # zscore|rank|vol
+  min_history_days: 250       # require enough history before using a symbol
+
+similarity:
+  metric: "pearson"           # pearson|spearman|cosine
+  top_k: 25                   # Y - number of analogs
+  min_sim: 0.20               # discard analogs below this similarity
+
+vote:
+  scheme: "similarity_weighted"   # majority|similarity_weighted
+  threshold: 0.70                 # Z - vote threshold in [0,1]
+  abstain_if_below_k: 10          # if <10 valid analogs, abstain
+
+backtest:
+  entry: "open"
+  exit: "close"
+  costs_bps: 5
+  slippage_bps: 3
+  max_positions: 10
+  position_pct: 0.10
+  side: "both"                    # long|short|both
+
+live:
+  output_dir: "results/live"
