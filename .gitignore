@@ -35,7 +35,8 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb
+# Don't ignore notebooks in notebooks/ folder
+!notebooks/*.ipynb
 
 # Environment variables
 .env
