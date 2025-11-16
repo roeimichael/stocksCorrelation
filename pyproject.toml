@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stocksCorrelation"
+version = "0.1.0"
+description = "Analog-based trading system using pattern similarity"
+requires-python = ">=3.10"
+
+[tool.ruff]
+# Target Python 3.10+
+target-version = "py310"
+
+# Line length
+line-length = 120
+
+# Paths to check
+include = ["src/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Enable rule sets
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RET", # flake8-return
+    "ARG", # flake8-unused-arguments
+]
+
+# Disable specific rules
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+    "B008",   # Do not perform function call in argument defaults
+    "B904",   # Use raise from within except
+    "RET504", # Unnecessary variable assignment before return
+    "ARG001", # Unused function argument (common in callbacks/interfaces)
+    "ARG002", # Unused method argument
+    "SIM108", # Use ternary operator (sometimes less readable)
+]
+
+# Allow fix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can have unused imports, arguments, and variables
+"tests/**/*.py" = ["F401", "F841", "B007", "ARG001", "ARG002"]
+# Scripts can be less strict (E402 is for sys.path manipulation, SIM113 for grid search)
+"scripts/**/*.py" = ["ARG001", "E402", "SIM113"]
+
+[tool.ruff.lint.isort]
+# isort configuration
+known-first-party = ["src"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.format]
+# Format configuration
+quote-style = "single"
+indent-style = "space"
+line-ending = "auto"

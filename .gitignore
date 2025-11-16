@@ -10,14 +10,17 @@ __pycache__/
 *.so
 .Python
 
-# Data directories (but keep ticker cache file)
-data/raw/
-data/processed/
-results/
+# Testing and type checking
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Keep ticker list for reproducibility
-!data/sp500_tickers.txt
-!data/sp500_top50.csv
+# Data directories (but keep small reference files)
+data/
+!data/.gitkeep
+results/
+!results/.gitkeep
 
 # IDEs
 .idea/
@@ -35,8 +38,9 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
-# Don't ignore notebooks in notebooks/ folder
-!notebooks/*.ipynb
+
+# Documentation (generated)
+*.md
 
 # Environment variables
 .env
@@ -45,3 +49,13 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Artifacts
+artifacts/
+!artifacts/.gitkeep
+
+# Plots and images (generated)
+*.png
+*.jpg
+*.pdf
+!docs/images/

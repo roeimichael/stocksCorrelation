@@ -1,225 +1,154 @@
-"""Data preprocessing and cleaning."""
-import pandas as pd
-import numpy as np
+"""Data preprocessing and cleaning with trading calendar alignment."""
 from pathlib import Path
-from typing import Optional, Tuple
+
+import pandas as pd
+import pandas_market_calendars as mcal
+
 from src.core.logger import get_logger
 
-logger = get_logger()
+
+logger = get_logger(__name__)
 
 
-def clean_price_data(
-    prices: pd.DataFrame,
-    max_missing_pct: float = 0.10,
-    forward_fill_limit: int = 5
-) -> pd.DataFrame:
+def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
     """
-    Clean price data by handling missing values and removing bad tickers.
+    Read raw parquet files, align on NYSE trading calendar, and compute returns.
 
     Args:
-        prices: DataFrame with prices (dates x tickers)
-        max_missing_pct: Maximum allowed percentage of missing data per ticker
-        forward_fill_limit: Maximum number of days to forward fill
+        symbols: List of ticker symbols
+        cfg: Configuration dictionary with 'data' section
 
     Returns:
-        Cleaned DataFrame
+        Wide DataFrame with shape (days, tickers) containing daily returns
+
+    Process:
+        1. Load per-symbol parquet files from data/raw/<symbol>.parquet
+        2. Align all data to NYSE trading calendar (pandas_market_calendars)
+        3. Forward-fill small gaps (max 1 day)
+        4. Compute close-to-close daily returns: (Close_t / Close_{t-1}) - 1
+        5. Save to data/processed/returns.parquet
+        6. Return the wide DataFrame
+
+    Features:
+        - Handles missing data by forward-filling up to 1 day
+        - Aligns all symbols to common NYSE trading calendar
+        - Removes symbols with insufficient data
+        - Logs data quality stats
     """
-    logger.info(f"Cleaning price data: {prices.shape}")
+    raw_dir = Path('data/raw')
+    processed_dir = Path('data/processed')
+    processed_dir.mkdir(parents=True, exist_ok=True)
 
-    # Remove tickers with too much missing data
-    missing_pct = prices.isna().sum() / len(prices)
-    bad_tickers = missing_pct[missing_pct > max_missing_pct].index.tolist()
+    start_date = cfg['data']['start']
+    end_date = cfg['data']['end']
 
-    if bad_tickers:
-        logger.warning(f"Removing {len(bad_tickers)} tickers with >{max_missing_pct*100}% missing data")
-        prices = prices.drop(columns=bad_tickers)
+    logger.info(f"Preparing returns for {len(symbols)} symbols")
 
-    # Forward fill small gaps (max forward_fill_limit days)
-    prices = prices.ffill(limit=forward_fill_limit)
+    # Get NYSE trading calendar
+    logger.debug("Loading NYSE trading calendar")
+    nyse = mcal.get_calendar('NYSE')
+    trading_days = nyse.schedule(start_date=start_date, end_date=end_date)
+    trading_dates = pd.DatetimeIndex(trading_days.index.date)
 
-    # Drop rows with any remaining NaN values
-    initial_rows = len(prices)
-    prices = prices.dropna()
-    dropped_rows = initial_rows - len(prices)
+    logger.info(f"NYSE trading calendar: {len(trading_dates)} days from {trading_dates[0]} to {trading_dates[-1]}")
 
-    if dropped_rows > 0:
-        logger.info(f"Dropped {dropped_rows} rows with missing data")
+    # Load all symbol data and extract Adj Close
+    price_dict = {}
+    skipped = []
 
-    logger.info(f"Cleaned data shape: {prices.shape}")
-    return prices
+    for symbol in symbols:
+        symbol_file = raw_dir / f"{symbol}.parquet"
 
+        if not symbol_file.exists():
+            logger.warning(f"Missing file for {symbol}, skipping")
+            skipped.append(symbol)
+            continue
 
-def compute_returns(
-    prices: pd.DataFrame,
-    method: str = 'simple'
-) -> pd.DataFrame:
-    """
-    Compute returns from prices.
+        try:
+            data = pd.read_parquet(symbol_file)
 
-    Args:
-        prices: DataFrame with prices (dates x tickers)
-        method: 'simple' for (P_t/P_{t-1} - 1) or 'log' for log returns
+            # Use Adj Close for returns calculation (already adjusted for splits/dividends)
+            if 'Adj Close' not in data.columns:
+                logger.warning(f"{symbol}: No 'Adj Close' column, using 'Close'")
+                prices = data['Close']
+            else:
+                prices = data['Adj Close']
 
-    Returns:
-        DataFrame with returns
-    """
-    logger.info(f"Computing {method} returns")
+            # Ensure datetime index
+            if not isinstance(prices.index, pd.DatetimeIndex):
+                prices.index = pd.to_datetime(prices.index)
 
-    if method == 'simple':
-        returns = prices.pct_change()
-    elif method == 'log':
-        returns = np.log(prices / prices.shift(1))
-    else:
-        raise ValueError(f"Unknown return method: {method}")
+            # Convert to date only (remove time component)
+            prices.index = pd.DatetimeIndex(prices.index.date)
 
-    # Drop first row (NaN)
+            price_dict[symbol] = prices
+
+        except Exception as e:
+            logger.error(f"Error loading {symbol}: {e}")
+            skipped.append(symbol)
+
+    if skipped:
+        logger.warning(f"Skipped {len(skipped)}/{len(symbols)} symbols due to errors")
+
+    if not price_dict:
+        raise ValueError("No valid symbol data loaded")
+
+    # Combine into wide DataFrame
+    logger.debug(f"Combining {len(price_dict)} symbols into wide DataFrame")
+    prices = pd.DataFrame(price_dict)
+
+    # Reindex to NYSE trading calendar
+    logger.debug("Aligning to NYSE trading calendar")
+    prices = prices.reindex(trading_dates)
+
+    # Forward-fill gaps (max 1 day)
+    logger.debug("Forward-filling gaps (max 1 day)")
+    prices_filled = prices.ffill(limit=1)
+
+    # Check data quality before computing returns
+    missing_before = prices.isna().sum().sum()
+    missing_after = prices_filled.isna().sum().sum()
+    logger.info(f"Missing values: {missing_before} before ffill, {missing_after} after ffill (max 1 day)")
+
+    # Drop columns (symbols) with too many NaNs (e.g., >10% missing)
+    max_missing_pct = 0.10
+    missing_pct = prices_filled.isna().sum() / len(prices_filled)
+    bad_symbols = missing_pct[missing_pct > max_missing_pct].index.tolist()
+
+    if bad_symbols:
+        logger.warning(f"Dropping {len(bad_symbols)} symbols with >{max_missing_pct*100}% missing data: {bad_symbols}")
+        prices_filled = prices_filled.drop(columns=bad_symbols)
+
+    # Compute daily returns: (P_t / P_{t-1}) - 1
+    logger.debug("Computing daily returns")
+    returns = prices_filled.pct_change()
+
+    # Drop first row (NaN from pct_change)
     returns = returns.iloc[1:]
 
-    logger.info(f"Returns shape: {returns.shape}")
+    # Check for any remaining NaNs
+    remaining_nans = returns.isna().sum().sum()
+    if remaining_nans > 0:
+        logger.warning(f"{remaining_nans} NaN values remain in returns")
+
+        # Drop rows with any NaN (conservative approach for clean data)
+        initial_rows = len(returns)
+        returns = returns.dropna(how='any')
+        dropped_rows = initial_rows - len(returns)
+
+        if dropped_rows > 0:
+            logger.warning(f"Dropped {dropped_rows} rows containing NaN values")
+
+    # Final data quality report
+    logger.info(f"Returns DataFrame shape: {returns.shape} ({returns.shape[0]} days, {returns.shape[1]} symbols)")
+    logger.info(f"Date range: {returns.index[0]} to {returns.index[-1]}")
+
+    # Summary statistics
+    logger.debug(f"Returns summary: mean={returns.mean().mean():.6f}, std={returns.std().mean():.6f}")
+
+    # Save to parquet
+    output_file = processed_dir / 'returns.parquet'
+    returns.to_parquet(output_file)
+    logger.info(f"Saved returns to {output_file}")
+
     return returns
-
-
-def align_trading_calendar(
-    returns: pd.DataFrame,
-    min_tickers_per_day: int = 10
-) -> pd.DataFrame:
-    """
-    Ensure consistent trading calendar across all tickers.
-
-    Args:
-        returns: DataFrame with returns (dates x tickers)
-        min_tickers_per_day: Minimum number of tickers with data to keep a date
-
-    Returns:
-        DataFrame with aligned calendar
-    """
-    logger.info("Aligning trading calendar")
-
-    # Count valid tickers per day
-    valid_per_day = returns.notna().sum(axis=1)
-
-    # Keep only days with enough valid tickers
-    valid_days = valid_per_day >= min_tickers_per_day
-    returns = returns[valid_days]
-
-    logger.info(f"Calendar aligned: {len(returns)} trading days")
-    return returns
-
-
-def normalize_returns(
-    returns: pd.DataFrame,
-    method: str = 'zscore',
-    window: Optional[int] = None
-) -> pd.DataFrame:
-    """
-    Normalize returns (usually done per-window, but can be global).
-
-    Args:
-        returns: DataFrame with returns
-        method: Normalization method ('zscore', 'rank', 'vol')
-        window: Rolling window for normalization (None = global)
-
-    Returns:
-        Normalized returns
-    """
-    logger.info(f"Normalizing returns: method={method}, window={window}")
-
-    if method == 'zscore':
-        if window:
-            # Rolling z-score
-            mean = returns.rolling(window).mean()
-            std = returns.rolling(window).std()
-            normalized = (returns - mean) / std
-        else:
-            # Global z-score per ticker
-            normalized = (returns - returns.mean()) / returns.std()
-
-    elif method == 'rank':
-        if window:
-            # Rolling rank
-            normalized = returns.rolling(window).apply(
-                lambda x: pd.Series(x).rank(pct=True).iloc[-1]
-            )
-        else:
-            # Global rank per ticker
-            normalized = returns.rank(pct=True)
-
-    elif method == 'vol':
-        if window:
-            # Scale by rolling volatility
-            vol = returns.rolling(window).std()
-            normalized = returns / vol
-        else:
-            # Scale by global volatility per ticker
-            normalized = returns / returns.std()
-
-    else:
-        raise ValueError(f"Unknown normalization method: {method}")
-
-    return normalized
-
-
-def prepare_data(
-    prices: pd.DataFrame,
-    config: dict,
-    save_path: Optional[str] = None
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Complete data preparation pipeline.
-
-    Args:
-        prices: Raw price DataFrame
-        config: Configuration dictionary
-        save_path: Optional path to save processed data
-
-    Returns:
-        Tuple of (cleaned prices, returns)
-    """
-    logger.info("Running data preparation pipeline")
-
-    # Clean prices
-    prices_clean = clean_price_data(prices)
-
-    # Compute returns
-    returns = compute_returns(prices_clean, method='simple')
-
-    # Align calendar
-    returns = align_trading_calendar(returns)
-
-    # Ensure we have enough history
-    min_history = config['windows'].get('min_history_days', 250)
-    if len(returns) < min_history:
-        raise ValueError(f"Insufficient history: {len(returns)} < {min_history} days")
-
-    logger.info(f"Prepared data: {returns.shape[0]} days, {returns.shape[1]} tickers")
-
-    # Save processed data
-    if save_path:
-        save_dir = Path(save_path)
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        prices_clean.to_parquet(save_dir / 'prices_clean.parquet')
-        returns.to_parquet(save_dir / 'returns.parquet')
-        logger.info(f"Saved processed data to {save_path}")
-
-    return prices_clean, returns
-
-
-def load_processed_data(data_dir: str = 'data/processed') -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Load previously processed data.
-
-    Args:
-        data_dir: Directory containing processed data
-
-    Returns:
-        Tuple of (prices, returns)
-    """
-    data_path = Path(data_dir)
-
-    prices = pd.read_parquet(data_path / 'prices_clean.parquet')
-    returns = pd.read_parquet(data_path / 'returns.parquet')
-
-    logger.info(f"Loaded processed data: {returns.shape[0]} days, {returns.shape[1]} tickers")
-
-    return prices, returns

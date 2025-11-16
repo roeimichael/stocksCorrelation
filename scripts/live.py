@@ -5,11 +5,12 @@ Usage:
     python scripts/live.py [--config configs/default.yaml]
 """
 import argparse
-from pathlib import Path
-import sys
 import pickle
+import sys
+from pathlib import Path
+
 import pandas as pd
-from datetime import datetime
+
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -17,9 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.core.config import load_config
 from src.core.logger import setup_logger
 from src.dataio.prep import load_processed_data
-from src.modeling.windows import get_latest_window, filter_windows_by_date
 from src.modeling.similarity import find_top_analogs
-from src.modeling.vote import generate_signal, filter_top_signals
+from src.modeling.vote import generate_signal
+from src.modeling.windows import filter_windows_by_date, get_latest_window
+
 
 logger = setup_logger()
 
@@ -124,7 +126,7 @@ def main():
     # Filter to active signals only
     active_signals = signals_df[signals_df['signal'] != 'ABSTAIN'].copy()
 
-    logger.info(f"\nGenerated signals:")
+    logger.info("\nGenerated signals:")
     logger.info(f"  Total: {len(signals_df)}")
     logger.info(f"  UP: {len(active_signals[active_signals['signal'] == 'UP'])}")
     logger.info(f"  DOWN: {len(active_signals[active_signals['signal'] == 'DOWN'])}")

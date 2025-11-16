@@ -1,279 +1,210 @@
 """Performance metrics for backtesting."""
-import pandas as pd
+from typing import Any
+
 import numpy as np
-from typing import List, Dict, Optional
+import pandas as pd
+
 from src.core.logger import get_logger
 
-logger = get_logger()
+
+logger = get_logger(__name__)
 
 
-def compute_hit_rate(
-    predictions: List[int],
-    actuals: List[int]
-) -> float:
+def equity_from_trades(
+    trades_df: pd.DataFrame,
+    costs_bps: float,
+    slippage_bps: float
+) -> pd.DataFrame:
     """
-    Compute hit rate (accuracy) of predictions.
+    Compute equity curve from trades DataFrame with transaction costs.
 
     Args:
-        predictions: List of predicted directions (1=up, 0=down)
-        actuals: List of actual directions (1=up, 0=down)
+        trades_df: DataFrame with columns [date, pnl, ...]
+                   pnl = realized PnL per trade (before costs)
+        costs_bps: Transaction costs in basis points (e.g., 5.0 = 0.05%)
+        slippage_bps: Slippage in basis points (e.g., 2.0 = 0.02%)
 
     Returns:
-        Hit rate in [0, 1]
+        DataFrame with columns [date, equity]
+            - date: Trade date (index)
+            - equity: Cumulative equity after costs
+
+    Process:
+        1. For each trade, compute net PnL:
+           net_pnl = pnl - (costs + slippage)
+           where costs = costs_bps/10000 * abs(notional)
+        2. Cumsum net PnL to get equity curve
+        3. Return DataFrame indexed by date
+
+    Notes:
+        - Assumes trades_df has 'date' and 'pnl' columns
+        - pnl should be gross PnL (before costs)
+        - If 'notional' column exists, uses it for cost calculation
+        - Otherwise, assumes notional = abs(pnl) / 0.01 (rough estimate)
+        - Equity starts at 0 (cumulative PnL)
+
+    Example:
+        >>> trades = pd.DataFrame({
+        ...     'date': pd.date_range('2024-01-01', periods=3),
+        ...     'pnl': [100, -50, 150],
+        ...     'notional': [10000, 10000, 10000]
+        ... })
+        >>> equity_df = equity_from_trades(trades, costs_bps=5.0, slippage_bps=2.0)
+        >>> # costs per trade = 10000 * 0.0007 = 7.0
+        >>> # net_pnl = [100-7, -50-7, 150-7] = [93, -57, 143]
+        >>> # equity = cumsum([93, -57, 143]) = [93, 36, 179]
     """
-    if len(predictions) != len(actuals):
-        raise ValueError("Predictions and actuals must have same length")
+    if len(trades_df) == 0:
+        logger.warning("Empty trades DataFrame, returning empty equity")
+        return pd.DataFrame(columns=['equity'])
 
-    if len(predictions) == 0:
-        return 0.0
+    if 'date' not in trades_df.columns:
+        raise ValueError("trades_df must have 'date' column")
 
-    correct = sum(p == a for p, a in zip(predictions, actuals))
-    return correct / len(predictions)
+    if 'pnl' not in trades_df.columns:
+        raise ValueError("trades_df must have 'pnl' column")
+
+    logger.info(f"Computing equity from {len(trades_df)} trades with "
+                f"costs={costs_bps}bps, slippage={slippage_bps}bps")
+
+    # Copy to avoid modifying original
+    df = trades_df.copy()
+
+    # Compute total cost rate in decimal
+    total_cost_rate = (costs_bps + slippage_bps) / 10000.0
+
+    # Estimate notional if not provided
+    if 'notional' not in df.columns:
+        # Rough estimate: notional = abs(pnl) / expected_return
+        # Assuming ~1% expected return per trade
+        df['notional'] = df['pnl'].abs() / 0.01
+        logger.debug("Estimated notional from PnL (no notional column provided)")
+
+    # Compute cost per trade
+    df['cost'] = df['notional'].abs() * total_cost_rate
+
+    # Compute net PnL (after costs)
+    df['net_pnl'] = df['pnl'] - df['cost']
+
+    # Cumulative sum to get equity
+    df['equity'] = df['net_pnl'].cumsum()
+
+    # Create result DataFrame indexed by date
+    equity_df = df.set_index('date')[['equity']].copy()
+
+    logger.info(f"Final equity: {equity_df['equity'].iloc[-1]:.2f}, "
+                f"Total costs: {df['cost'].sum():.2f}")
+
+    return equity_df
 
 
-def compute_precision_recall(
-    predictions: List[int],
-    actuals: List[int]
-) -> Dict[str, float]:
+def summary_metrics(
+    equity_df: pd.DataFrame,
+    trades_df: pd.DataFrame | None = None
+) -> dict[str, Any]:
     """
-    Compute precision and recall for up and down predictions.
+    Compute summary performance metrics from equity curve.
 
     Args:
-        predictions: List of predicted directions (1=up, 0=down)
-        actuals: List of actual directions (1=up, 0=down)
+        equity_df: DataFrame with 'equity' column (indexed by date)
+        trades_df: Optional DataFrame with 'pnl' column for hit_rate calculation
 
     Returns:
-        Dictionary with precision and recall metrics
+        Dictionary with metrics:
+            - total_return: float, cumulative return
+            - sharpe: float, daily Sharpe ratio (annualized by sqrt(252))
+            - max_dd: float, maximum drawdown (negative value)
+            - hit_rate: float, fraction of winning trades (if trades_df provided)
+
+    Formulas:
+        - total_return = (final_equity - initial_equity) / initial_equity
+          (assumes initial_equity = 0, so total_return = final_equity)
+        - sharpe = mean(daily_returns) / std(daily_returns) * sqrt(252)
+        - max_dd = min((equity - running_max) / running_max)
+        - hit_rate = (number of trades with pnl > 0) / (total trades)
+
+    Notes:
+        - If equity curve is empty, returns zeros
+        - Sharpe is annualized (daily * sqrt(252))
+        - max_dd is negative (e.g., -0.15 = 15% drawdown)
+        - hit_rate only computed if trades_df provided
+
+    Example:
+        >>> equity_df = pd.DataFrame({
+        ...     'equity': [100, 150, 120, 180]
+        ... }, index=pd.date_range('2024-01-01', periods=4))
+        >>> metrics = summary_metrics(equity_df)
+        >>> print(metrics)
+        {'total_return': 1.80, 'sharpe': 2.35, 'max_dd': -0.20, 'hit_rate': None}
     """
-    if len(predictions) != len(actuals):
-        raise ValueError("Predictions and actuals must have same length")
-
-    # True positives, false positives, etc.
-    tp_up = sum(p == 1 and a == 1 for p, a in zip(predictions, actuals))
-    fp_up = sum(p == 1 and a == 0 for p, a in zip(predictions, actuals))
-    fn_up = sum(p == 0 and a == 1 for p, a in zip(predictions, actuals))
-
-    tp_down = sum(p == 0 and a == 0 for p, a in zip(predictions, actuals))
-    fp_down = sum(p == 0 and a == 1 for p, a in zip(predictions, actuals))
-    fn_down = sum(p == 1 and a == 0 for p, a in zip(predictions, actuals))
-
-    # Precision and recall
-    precision_up = tp_up / (tp_up + fp_up) if (tp_up + fp_up) > 0 else 0.0
-    recall_up = tp_up / (tp_up + fn_up) if (tp_up + fn_up) > 0 else 0.0
-
-    precision_down = tp_down / (tp_down + fp_down) if (tp_down + fp_down) > 0 else 0.0
-    recall_down = tp_down / (tp_down + fn_down) if (tp_down + fn_down) > 0 else 0.0
-
-    return {
-        'precision_up': precision_up,
-        'recall_up': recall_up,
-        'precision_down': precision_down,
-        'recall_down': recall_down
-    }
-
-
-def compute_returns_metrics(
-    returns: pd.Series,
-    risk_free_rate: float = 0.0
-) -> Dict[str, float]:
-    """
-    Compute return-based performance metrics.
-
-    Args:
-        returns: Series of returns
-        risk_free_rate: Annual risk-free rate (default: 0)
-
-    Returns:
-        Dictionary with metrics
-    """
-    if len(returns) == 0:
+    if len(equity_df) == 0:
+        logger.warning("Empty equity DataFrame, returning zero metrics")
         return {
             'total_return': 0.0,
-            'annualized_return': 0.0,
-            'annualized_volatility': 0.0,
-            'sharpe_ratio': 0.0,
-            'max_drawdown': 0.0,
-            'num_trades': 0
+            'sharpe': 0.0,
+            'max_dd': 0.0,
+            'hit_rate': None
         }
 
-    # Total return
-    total_return = (1 + returns).prod() - 1
+    if 'equity' not in equity_df.columns:
+        raise ValueError("equity_df must have 'equity' column")
 
-    # Annualized return (assuming daily returns)
-    num_days = len(returns)
-    annualized_return = (1 + total_return) ** (252 / num_days) - 1
+    logger.info(f"Computing summary metrics from {len(equity_df)} equity points")
 
-    # Annualized volatility
-    annualized_vol = returns.std() * np.sqrt(252)
+    equity = equity_df['equity'].values
 
-    # Sharpe ratio
-    if annualized_vol > 0:
-        sharpe_ratio = (annualized_return - risk_free_rate) / annualized_vol
+    # Total return (assuming starting from 0)
+    # If equity starts at 0, total_return = final_equity
+    # If equity starts at initial_capital, total_return = (final - initial) / initial
+    # For simplicity, assume equity is cumulative PnL starting from 0
+    if len(equity) > 0:
+        total_return = equity[-1]
     else:
-        sharpe_ratio = 0.0
+        total_return = 0.0
 
-    # Max drawdown
-    cumulative = (1 + returns).cumprod()
-    running_max = cumulative.expanding().max()
-    drawdown = (cumulative - running_max) / running_max
-    max_drawdown = drawdown.min()
+    # Daily returns (pct_change of equity)
+    # Need to handle equity starting at 0
+    # Use diff() instead for cumulative PnL
+    if len(equity) > 1:
+        daily_pnl = np.diff(equity)
+        mean_daily_pnl = daily_pnl.mean()
+        std_daily_pnl = daily_pnl.std()
+
+        if std_daily_pnl > 0:
+            # Daily Sharpe ratio, annualized
+            sharpe = (mean_daily_pnl / std_daily_pnl) * np.sqrt(252)
+        else:
+            sharpe = 0.0
+    else:
+        sharpe = 0.0
+
+    # Maximum drawdown
+    # Drawdown = (equity - running_max) / running_max
+    # For cumulative PnL starting at 0, need to add initial capital for percentage
+    # Better: use running_max of equity directly
+    running_max = np.maximum.accumulate(equity)
+
+    # Avoid division by zero: if running_max is 0, drawdown is undefined
+    # Use equity[0] + 1 as base if needed
+    base = np.maximum(running_max, 1.0)  # Minimum base of 1
+    drawdown = (equity - running_max) / base
+    max_dd = float(drawdown.min())
+
+    # Hit rate (from trades)
+    hit_rate = None
+    if trades_df is not None and 'pnl' in trades_df.columns:
+        winning_trades = (trades_df['pnl'] > 0).sum()
+        total_trades = len(trades_df)
+        if total_trades > 0:
+            hit_rate = winning_trades / total_trades
+            logger.debug(f"Hit rate: {winning_trades}/{total_trades} = {hit_rate:.3f}")
+
+    logger.info(f"Metrics: total_return={total_return:.2f}, sharpe={sharpe:.2f}, "
+                f"max_dd={max_dd:.2%}, hit_rate={hit_rate}")
 
     return {
         'total_return': float(total_return),
-        'annualized_return': float(annualized_return),
-        'annualized_volatility': float(annualized_vol),
-        'sharpe_ratio': float(sharpe_ratio),
-        'max_drawdown': float(max_drawdown),
-        'num_trades': len(returns)
+        'sharpe': float(sharpe),
+        'max_dd': float(max_dd),
+        'hit_rate': float(hit_rate) if hit_rate is not None else None
     }
-
-
-def compute_pnl_metrics(
-    equity_curve: pd.Series,
-    initial_capital: float = 100000.0
-) -> Dict[str, float]:
-    """
-    Compute PnL-based metrics from equity curve.
-
-    Args:
-        equity_curve: Series of equity values over time
-        initial_capital: Starting capital
-
-    Returns:
-        Dictionary with PnL metrics
-    """
-    if len(equity_curve) == 0:
-        return {
-            'final_equity': initial_capital,
-            'total_pnl': 0.0,
-            'pnl_pct': 0.0,
-            'max_equity': initial_capital,
-            'min_equity': initial_capital,
-            'max_drawdown_pct': 0.0
-        }
-
-    final_equity = equity_curve.iloc[-1]
-    total_pnl = final_equity - initial_capital
-    pnl_pct = total_pnl / initial_capital
-
-    # Max and min equity
-    max_equity = equity_curve.max()
-    min_equity = equity_curve.min()
-
-    # Max drawdown percentage
-    running_max = equity_curve.expanding().max()
-    drawdown = (equity_curve - running_max) / running_max
-    max_drawdown_pct = drawdown.min()
-
-    return {
-        'final_equity': float(final_equity),
-        'total_pnl': float(total_pnl),
-        'pnl_pct': float(pnl_pct),
-        'max_equity': float(max_equity),
-        'min_equity': float(min_equity),
-        'max_drawdown_pct': float(max_drawdown_pct)
-    }
-
-
-def compute_trade_statistics(
-    trades_df: pd.DataFrame
-) -> Dict[str, float]:
-    """
-    Compute statistics from trade log.
-
-    Args:
-        trades_df: DataFrame with trade records (must have 'pnl' column)
-
-    Returns:
-        Dictionary with trade statistics
-    """
-    if len(trades_df) == 0 or 'pnl' not in trades_df.columns:
-        return {
-            'num_trades': 0,
-            'num_wins': 0,
-            'num_losses': 0,
-            'win_rate': 0.0,
-            'avg_win': 0.0,
-            'avg_loss': 0.0,
-            'profit_factor': 0.0,
-            'avg_pnl': 0.0
-        }
-
-    pnls = trades_df['pnl']
-    wins = pnls[pnls > 0]
-    losses = pnls[pnls < 0]
-
-    num_trades = len(trades_df)
-    num_wins = len(wins)
-    num_losses = len(losses)
-
-    win_rate = num_wins / num_trades if num_trades > 0 else 0.0
-    avg_win = wins.mean() if len(wins) > 0 else 0.0
-    avg_loss = losses.mean() if len(losses) > 0 else 0.0
-
-    # Profit factor
-    total_wins = wins.sum() if len(wins) > 0 else 0.0
-    total_losses = abs(losses.sum()) if len(losses) > 0 else 0.0
-    profit_factor = total_wins / total_losses if total_losses > 0 else 0.0
-
-    avg_pnl = pnls.mean()
-
-    return {
-        'num_trades': int(num_trades),
-        'num_wins': int(num_wins),
-        'num_losses': int(num_losses),
-        'win_rate': float(win_rate),
-        'avg_win': float(avg_win),
-        'avg_loss': float(avg_loss),
-        'profit_factor': float(profit_factor),
-        'avg_pnl': float(avg_pnl)
-    }
-
-
-def print_backtest_summary(metrics: Dict[str, float]) -> None:
-    """
-    Print formatted backtest summary.
-
-    Args:
-        metrics: Dictionary with all metrics
-    """
-    logger.info("=" * 60)
-    logger.info("BACKTEST SUMMARY")
-    logger.info("=" * 60)
-
-    # Returns metrics
-    if 'annualized_return' in metrics:
-        logger.info("\nReturn Metrics:")
-        logger.info(f"  Total Return:        {metrics.get('total_return', 0) * 100:>8.2f}%")
-        logger.info(f"  Annualized Return:   {metrics.get('annualized_return', 0) * 100:>8.2f}%")
-        logger.info(f"  Annualized Vol:      {metrics.get('annualized_volatility', 0) * 100:>8.2f}%")
-        logger.info(f"  Sharpe Ratio:        {metrics.get('sharpe_ratio', 0):>8.2f}")
-        logger.info(f"  Max Drawdown:        {metrics.get('max_drawdown', 0) * 100:>8.2f}%")
-
-    # PnL metrics
-    if 'total_pnl' in metrics:
-        logger.info("\nPnL Metrics:")
-        logger.info(f"  Total PnL:           ${metrics.get('total_pnl', 0):>12,.2f}")
-        logger.info(f"  PnL %:               {metrics.get('pnl_pct', 0) * 100:>8.2f}%")
-        logger.info(f"  Final Equity:        ${metrics.get('final_equity', 0):>12,.2f}")
-
-    # Trade statistics
-    if 'num_trades' in metrics:
-        logger.info("\nTrade Statistics:")
-        logger.info(f"  Number of Trades:    {metrics.get('num_trades', 0):>8}")
-        logger.info(f"  Wins / Losses:       {metrics.get('num_wins', 0):>4} / {metrics.get('num_losses', 0):<4}")
-        logger.info(f"  Win Rate:            {metrics.get('win_rate', 0) * 100:>8.2f}%")
-        logger.info(f"  Avg Win:             ${metrics.get('avg_win', 0):>10,.2f}")
-        logger.info(f"  Avg Loss:            ${metrics.get('avg_loss', 0):>10,.2f}")
-        logger.info(f"  Profit Factor:       {metrics.get('profit_factor', 0):>8.2f}")
-
-    # Direction metrics
-    if 'hit_rate' in metrics:
-        logger.info("\nDirection Metrics:")
-        logger.info(f"  Hit Rate:            {metrics.get('hit_rate', 0) * 100:>8.2f}%")
-        logger.info(f"  Precision (up):      {metrics.get('precision_up', 0) * 100:>8.2f}%")
-        logger.info(f"  Recall (up):         {metrics.get('recall_up', 0) * 100:>8.2f}%")
-        logger.info(f"  Precision (down):    {metrics.get('precision_down', 0) * 100:>8.2f}%")
-        logger.info(f"  Recall (down):       {metrics.get('recall_down', 0) * 100:>8.2f}%")
-
-    logger.info("=" * 60)

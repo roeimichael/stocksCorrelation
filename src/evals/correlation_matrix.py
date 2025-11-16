@@ -1,239 +1,145 @@
 """Correlation analysis for EDA."""
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
 from src.core.logger import get_logger
 
-logger = get_logger()
+
+logger = get_logger(__name__)
 
 
-def compute_correlation_matrix(
-    returns: pd.DataFrame,
-    method: str = 'pearson'
+def corr_matrix(
+    returns_df: pd.DataFrame,
+    start: pd.Timestamp | None = None,
+    end: pd.Timestamp | None = None
 ) -> pd.DataFrame:
     """
-    Compute correlation matrix for returns.
+    Compute correlation matrix for stock returns.
 
     Args:
-        returns: DataFrame with returns (dates x tickers)
-        method: Correlation method ('pearson' or 'spearman')
+        returns_df: DataFrame with returns (index=dates, columns=symbols)
+        start: Optional start date for filtering (default: use all data)
+        end: Optional end date for filtering (default: use all data)
 
     Returns:
-        Correlation matrix DataFrame
+        Correlation matrix as DataFrame (symbols x symbols)
+
+    Notes:
+        - Uses Pearson correlation
+        - Filters by date range if start/end provided
+        - Handles NaN values (pairwise complete observations)
+
+    Example:
+        >>> returns_df = pd.read_parquet('data/processed/returns.parquet')
+        >>> corr = corr_matrix(returns_df, start=pd.Timestamp('2023-01-01'))
+        >>> print(corr.shape)  # (N, N) where N = number of symbols
+        >>> corr.to_csv('results/correlation.csv')
     """
-    logger.info(f"Computing {method} correlation matrix for {len(returns.columns)} tickers")
+    # Filter by date range if provided
+    if start is not None or end is not None:
+        logger.info(f"Filtering returns: start={start}, end={end}")
 
-    corr_matrix = returns.corr(method=method)
+        if start is not None and end is not None:
+            filtered_df = returns_df.loc[start:end]
+        elif start is not None:
+            filtered_df = returns_df.loc[start:]
+        else:  # end is not None
+            filtered_df = returns_df.loc[:end]
+    else:
+        filtered_df = returns_df
 
-    # Log summary statistics
-    upper_triangle = corr_matrix.where(
-        np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+    logger.info(f"Computing correlation matrix for {len(filtered_df.columns)} symbols "
+                f"over {len(filtered_df)} days")
+
+    # Compute Pearson correlation
+    corr = filtered_df.corr(method='pearson')
+
+    # Log summary statistics (upper triangle excluding diagonal)
+    upper_triangle = corr.where(
+        np.triu(np.ones(corr.shape), k=1).astype(bool)
     )
     correlations = upper_triangle.values.flatten()
     correlations = correlations[~np.isnan(correlations)]
 
-    logger.info(f"Correlation stats: mean={correlations.mean():.3f}, "
-                f"median={np.median(correlations):.3f}, "
-                f"std={correlations.std():.3f}")
+    if len(correlations) > 0:
+        logger.info(f"Correlation statistics: "
+                    f"mean={correlations.mean():.3f}, "
+                    f"median={np.median(correlations):.3f}, "
+                    f"std={correlations.std():.3f}, "
+                    f"min={correlations.min():.3f}, "
+                    f"max={correlations.max():.3f}")
+    else:
+        logger.warning("No valid correlations computed")
 
-    return corr_matrix
+    return corr
 
 
-def plot_correlation_heatmap(
-    corr_matrix: pd.DataFrame,
-    output_path: Optional[str] = None,
+def save_heatmap(
+    corr: pd.DataFrame,
+    output_path: str | None = None,
     title: str = "Stock Returns Correlation Matrix",
-    figsize: tuple = (12, 10)
+    figsize: tuple = (12, 10),
+    cmap: str = 'RdBu_r'
 ) -> None:
     """
-    Plot correlation matrix as heatmap.
+    Save correlation matrix as heatmap PNG.
 
     Args:
-        corr_matrix: Correlation matrix
-        output_path: Optional path to save figure
+        corr: Correlation matrix DataFrame
+        output_path: Path to save figure (default: results/plots/corr_<timestamp>.png)
         title: Plot title
-        figsize: Figure size
-    """
-    logger.info("Plotting correlation heatmap")
+        figsize: Figure size in inches
+        cmap: Colormap name (default: 'RdBu_r' for red-blue diverging)
 
+    Notes:
+        - If output_path not provided, uses results/plots/corr_<timestamp>.png
+        - Creates output directory if it doesn't exist
+        - Closes figure after saving (no display)
+        - For large matrices (>50 symbols), consider sampling first
+
+    Example:
+        >>> corr = corr_matrix(returns_df)
+        >>> save_heatmap(corr)  # Saves to results/plots/corr_YYYYMMDD_HHMMSS.png
+        >>> save_heatmap(corr, 'my_corr.png')  # Custom path
+    """
+    if output_path is None:
+        # Generate default path with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f'results/plots/corr_{timestamp}.png'
+
+    logger.info(f"Creating correlation heatmap: {corr.shape[0]} x {corr.shape[1]}")
+
+    # Create output directory
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Create figure
     plt.figure(figsize=figsize)
 
-    # Create heatmap
+    # Plot heatmap
     sns.heatmap(
-        corr_matrix,
-        cmap='RdBu_r',
+        corr,
+        cmap=cmap,
         center=0,
         vmin=-1,
         vmax=1,
         square=True,
         linewidths=0,
-        cbar_kws={"shrink": 0.8}
+        cbar_kws={"shrink": 0.8},
+        xticklabels=True,
+        yticklabels=True
     )
 
-    plt.title(title)
+    plt.title(title, fontsize=14)
     plt.tight_layout()
 
-    if output_path:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        logger.info(f"Saved heatmap to {output_path}")
+    # Save figure
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    logger.info(f"Saved heatmap to {output_path}")
 
+    # Close figure to free memory
     plt.close()
-
-
-def plot_correlation_distribution(
-    corr_matrix: pd.DataFrame,
-    output_path: Optional[str] = None,
-    title: str = "Distribution of Pairwise Correlations"
-) -> None:
-    """
-    Plot histogram of pairwise correlations.
-
-    Args:
-        corr_matrix: Correlation matrix
-        output_path: Optional path to save figure
-        title: Plot title
-    """
-    logger.info("Plotting correlation distribution")
-
-    # Extract upper triangle (exclude diagonal)
-    upper_triangle = corr_matrix.where(
-        np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
-    )
-    correlations = upper_triangle.values.flatten()
-    correlations = correlations[~np.isnan(correlations)]
-
-    plt.figure(figsize=(10, 6))
-
-    plt.hist(correlations, bins=50, edgecolor='black', alpha=0.7)
-    plt.axvline(correlations.mean(), color='red', linestyle='--',
-                label=f'Mean: {correlations.mean():.3f}')
-    plt.axvline(np.median(correlations), color='green', linestyle='--',
-                label=f'Median: {np.median(correlations):.3f}')
-
-    plt.xlabel('Correlation')
-    plt.ylabel('Frequency')
-    plt.title(title)
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-
-    if output_path:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        logger.info(f"Saved distribution plot to {output_path}")
-
-    plt.close()
-
-
-def find_highly_correlated_pairs(
-    corr_matrix: pd.DataFrame,
-    threshold: float = 0.8
-) -> pd.DataFrame:
-    """
-    Find pairs of stocks with high correlation.
-
-    Args:
-        corr_matrix: Correlation matrix
-        threshold: Minimum correlation to report
-
-    Returns:
-        DataFrame with highly correlated pairs
-    """
-    logger.info(f"Finding pairs with correlation >= {threshold}")
-
-    pairs = []
-
-    for i in range(len(corr_matrix.columns)):
-        for j in range(i + 1, len(corr_matrix.columns)):
-            corr = corr_matrix.iloc[i, j]
-            if abs(corr) >= threshold:
-                pairs.append({
-                    'ticker1': corr_matrix.columns[i],
-                    'ticker2': corr_matrix.columns[j],
-                    'correlation': corr
-                })
-
-    df = pd.DataFrame(pairs)
-
-    if len(df) > 0:
-        df = df.sort_values('correlation', ascending=False)
-        logger.info(f"Found {len(df)} highly correlated pairs")
-    else:
-        logger.info("No highly correlated pairs found")
-
-    return df
-
-
-def analyze_correlations(
-    returns: pd.DataFrame,
-    output_dir: str = 'results/experiments'
-) -> dict:
-    """
-    Complete correlation analysis with plots.
-
-    Args:
-        returns: DataFrame with returns
-        output_dir: Directory to save outputs
-
-    Returns:
-        Dictionary with correlation statistics
-    """
-    logger.info("Running correlation analysis")
-
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Compute correlation matrix
-    corr_matrix = compute_correlation_matrix(returns, method='pearson')
-
-    # Plot heatmap (sample if too large)
-    if len(corr_matrix) > 50:
-        logger.info("Sampling 50 tickers for heatmap visualization")
-        sample_tickers = corr_matrix.columns[:50]
-        corr_sample = corr_matrix.loc[sample_tickers, sample_tickers]
-        plot_correlation_heatmap(
-            corr_sample,
-            output_path=str(output_path / 'correlation_heatmap_sample.png')
-        )
-    else:
-        plot_correlation_heatmap(
-            corr_matrix,
-            output_path=str(output_path / 'correlation_heatmap.png')
-        )
-
-    # Plot distribution
-    plot_correlation_distribution(
-        corr_matrix,
-        output_path=str(output_path / 'correlation_distribution.png')
-    )
-
-    # Find highly correlated pairs
-    high_corr_pairs = find_highly_correlated_pairs(corr_matrix, threshold=0.8)
-    if len(high_corr_pairs) > 0:
-        high_corr_pairs.to_csv(output_path / 'high_correlation_pairs.csv', index=False)
-        logger.info(f"Saved high correlation pairs to {output_path / 'high_correlation_pairs.csv'}")
-
-    # Summary statistics
-    upper_triangle = corr_matrix.where(
-        np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
-    )
-    correlations = upper_triangle.values.flatten()
-    correlations = correlations[~np.isnan(correlations)]
-
-    stats = {
-        'mean': float(correlations.mean()),
-        'median': float(np.median(correlations)),
-        'std': float(correlations.std()),
-        'min': float(correlations.min()),
-        'max': float(correlations.max()),
-        'num_pairs': len(correlations),
-        'high_corr_pairs': len(high_corr_pairs)
-    }
-
-    logger.info(f"Correlation analysis complete: {stats}")
-
-    return stats

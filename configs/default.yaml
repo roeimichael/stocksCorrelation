@@ -1,34 +1,64 @@
+# sp500-analogs Configuration File
+# All parameters for data, modeling, backtesting, and live trading
+
 data:
-  start: "2023-10-22"
-  end: "2025-10-22"
-  universe: "sp500"                  # Use all S&P 500 stocks from Wikipedia
-  top_n: null                        # null = use all stocks, or specify a number (e.g., 50)
-  interval: "1d"
-  include_index: true                # Include S&P 500 index (^GSPC)
+  start: "2023-01-01"
+  end: "2025-10-14"
+  universe: "sp500"           # Options: "sp500", "custom"
+  top_n: 50                   # Use top N stocks by market cap (null = all)
+  interval: "1d"              # Data frequency: "1d" for daily
+  include_index: true         # Include ^GSPC in universe
 
 windows:
-  length: 10                  # X - window length in days
-  normalization: "zscore"     # zscore|rank|vol
-  min_history_days: 250       # require enough history before using a symbol
+  length: 10                  # X: Number of days in each pattern window
+  normalization: "zscore"     # Options: "zscore", "rank", "vol", "none"
+  min_history_days: 250       # Minimum trading days before creating windows
 
 similarity:
-  metric: "pearson"           # pearson|spearman|cosine
-  top_k: 25                   # Y - number of analogs
-  min_sim: 0.20               # discard analogs below this similarity
+  metric: "pearson"           # Options: "pearson", "spearman", "cosine", "euclidean"
+  top_k: 25                   # Y: Number of top analogs to use for voting
+  min_sim: 0.20              # Minimum similarity threshold (filter weak matches)
 
 vote:
-  scheme: "similarity_weighted"   # majority|similarity_weighted
-  threshold: 0.70                 # Z - vote threshold in [0,1]
-  abstain_if_below_k: 10          # if <10 valid analogs, abstain
+  scheme: "similarity_weighted"  # Options: "majority", "similarity_weighted"
+  threshold: 0.70             # Z: Minimum vote fraction to emit signal (0.70 = 70%)
+  abstain_if_below_k: 10      # Abstain if fewer than K analogs found
 
 backtest:
-  entry: "open"
-  exit: "close"
-  costs_bps: 5
-  slippage_bps: 3
-  max_positions: 10
-  position_pct: 0.10
-  side: "both"                    # long|short|both
+  entry: "open"               # Entry price: "open" or "close"
+  exit: "close"               # Exit price: "open" or "close"
+  costs_bps: 5                # Transaction costs (basis points, 5 = 0.05%)
+  slippage_bps: 3             # Slippage estimate (basis points)
+  max_positions: 10           # Maximum concurrent positions
+  position_pct: 0.10          # Position size as fraction of equity (0.10 = 10%)
+  side: "both"                # Trading side: "long", "short", "both"
+
+monitor:
+  lookback_M: 5               # Monitor last M months of performance
+  sr_floor: 0.20              # Yellow alert if Sharpe < threshold
+  dc_floor: 0.55              # Yellow alert if direction accuracy < threshold
+  cd_drop_alert: -0.30        # Red alert if cumulative profit drops by 30%
+  pds_z_alert: 1.5            # Alert if P&L deviation > 1.5 std devs
+  cusum_k_sigma: 1.0          # CUSUM drift detection sensitivity
+
+actions:
+  yellow_trim_pct: 0.50       # Trim positions by 50% on yellow alert
+  red_exit: true              # Exit all positions on red alert
+  add_on_strength:
+    sr_min: 0.30              # Add to positions if Sharpe > 0.30
+    dc_min: 0.75              # And direction accuracy > 75%
+    cd_trend_days: 3          # And cumulative profit up for 3 days
+    add_pct: 0.25             # Increase position size by 25%
+
+hedge:
+  enabled: true               # Enable hedging module
+  method: "basket"            # Options: "basket", "index", "sector"
+  K: 5                        # Top K negatively correlated stocks for hedge basket
+  min_neg_corr: -0.10         # Minimum negative correlation for hedge candidates
+  target_ratio: 0.7           # Target hedge ratio (0.7 = 70% hedged)
+  rebalance_days: 5           # Rebalance hedge every N days
 
 live:
-  output_dir: "results/live"
+  output_dir: "results/live"  # Directory for live signal output
+  signal_file: "signals_{date}.csv"  # Signal filename template
+  log_level: "INFO"           # Logging level: DEBUG, INFO, WARNING, ERROR

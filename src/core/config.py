@@ -1,10 +1,11 @@
 """Configuration loader and validator."""
-import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
+
+import yaml
 
 
-def load_config(config_path: str = "configs/default.yaml") -> Dict[str, Any]:
+def load_config(config_path: str = "configs/default.yaml") -> dict[str, Any]:
     """
     Load configuration from YAML file.
 
@@ -18,7 +19,7 @@ def load_config(config_path: str = "configs/default.yaml") -> Dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    with open(path, 'r') as f:
+    with open(path) as f:
         config = yaml.safe_load(f)
 
     # Basic validation
@@ -27,7 +28,7 @@ def load_config(config_path: str = "configs/default.yaml") -> Dict[str, Any]:
     return config
 
 
-def validate_config(config: Dict[str, Any]) -> None:
+def validate_config(config: dict[str, Any]) -> None:
     """
     Validate configuration parameters.
 
@@ -71,7 +72,7 @@ def validate_config(config: Dict[str, Any]) -> None:
         raise ValueError(f"Vote scheme must be one of {valid_schemes}")
 
 
-def get_param(config: Dict[str, Any], *keys, default=None) -> Any:
+def get_param(config: dict[str, Any], *keys, default=None) -> Any:
     """
     Safely get nested configuration parameter.
 

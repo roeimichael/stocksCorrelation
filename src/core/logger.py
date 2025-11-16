@@ -1,69 +1,56 @@
-"""Simple logging utility."""
-import logging
+"""Logging utility using loguru."""
 import sys
 from pathlib import Path
-from typing import Optional
+
+from loguru import logger
 
 
-def setup_logger(
-    name: str = "sp500_analogs",
-    level: int = logging.INFO,
-    log_file: Optional[str] = None
-) -> logging.Logger:
+def get_logger(name: str = "sp500_analogs", log_file: str = None, level: str = "INFO"):
     """
-    Set up a logger with console and optional file output.
+    Get a configured logger instance using loguru.
 
     Args:
-        name: Logger name
-        level: Logging level (default: INFO)
+        name: Logger name (used as context)
         log_file: Optional path to log file
+        level: Log level (DEBUG, INFO, WARNING, ERROR)
 
     Returns:
-        Configured logger instance
+        Configured loguru logger
+
+    Usage:
+        logger = get_logger(__name__)
+        logger.info("Processing data...")
+        logger.debug("Debug details: {}", some_value)
+        logger.error("Error occurred: {}", exc)
     """
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
+    # Remove default handler
+    logger.remove()
 
-    # Avoid adding handlers multiple times
-    if logger.handlers:
-        return logger
-
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-
-    # Formatter with timestamps
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+    # Add console handler with formatting
+    logger.add(
+        sys.stdout,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan> | <level>{message}</level>",
+        level=level,
+        colorize=True
     )
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
 
-    # File handler if specified
+    # Add file handler if specified
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        logger.add(
+            log_file,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {extra[name]} | {message}",
+            level=level,
+            rotation="10 MB",  # Rotate when file reaches 10 MB
+            retention="7 days",  # Keep logs for 7 days
+            compression="zip"  # Compress rotated logs
+        )
 
-    return logger
+    # Bind the name as context
+    return logger.bind(name=name)
 
 
-def get_logger(name: str = "sp500_analogs") -> logging.Logger:
-    """
-    Get existing logger or create default one.
-
-    Args:
-        name: Logger name
-
-    Returns:
-        Logger instance
-    """
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        logger = setup_logger(name)
-    return logger
+# Create default logger instance
+default_logger = get_logger()

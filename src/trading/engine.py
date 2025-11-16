@@ -1,366 +1,341 @@
-"""Minimal backtesting engine with costs and slippage."""
+"""Minimal daily backtesting engine."""
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 import pandas as pd
-import numpy as np
-from typing import List, Dict, Tuple
-from dataclasses import dataclass
-from src.modeling.windows import Window
-from src.modeling.vote import Signal, signal_to_position, filter_top_signals
+
 from src.core.logger import get_logger
+from src.evals.metrics import equity_from_trades, summary_metrics
+from src.modeling.similarity import rank_analogs
+from src.modeling.vote import vote
+from src.modeling.windows import normalize_window
 
-logger = get_logger()
+
+logger = get_logger(__name__)
 
 
-@dataclass
-class Trade:
-    """Record of a single trade."""
+def generate_daily_signals(
+    returns_df: pd.DataFrame,
+    windows_bank: pd.DataFrame,
+    cfg: dict[str, Any],
     date: pd.Timestamp
-    symbol: str
-    direction: int  # 1 = long, -1 = short
-    entry_price: float
-    exit_price: float
-    shares: float
-    pnl: float
-    return_pct: float
-    costs: float
-
-
-class BacktestEngine:
+) -> pd.DataFrame:
     """
-    Simple walk-forward backtester for daily signals.
-    Entry at open, exit at close on the same day.
-    """
-
-    def __init__(
-        self,
-        prices: pd.DataFrame,
-        returns: pd.DataFrame,
-        config: dict,
-        initial_capital: float = 100000.0
-    ):
-        """
-        Initialize backtest engine.
-
-        Args:
-            prices: DataFrame with prices (dates x tickers)
-            returns: DataFrame with returns (dates x tickers)
-            config: Configuration dictionary
-            initial_capital: Starting capital
-        """
-        self.prices = prices
-        self.returns = returns
-        self.config = config
-        self.initial_capital = initial_capital
-
-        # Backtest config
-        self.entry = config['backtest']['entry']
-        self.exit = config['backtest']['exit']
-        self.costs_bps = config['backtest']['costs_bps']
-        self.slippage_bps = config['backtest']['slippage_bps']
-        self.max_positions = config['backtest']['max_positions']
-        self.position_pct = config['backtest']['position_pct']
-        self.side = config['backtest']['side']
-
-        # Results
-        self.trades: List[Trade] = []
-        self.equity_curve: List[float] = [initial_capital]
-        self.dates: List[pd.Timestamp] = []
-
-    def get_price(self, date: pd.Timestamp, symbol: str, price_type: str) -> float:
-        """
-        Get price for a symbol on a date.
-
-        Args:
-            date: Trade date
-            symbol: Ticker symbol
-            price_type: 'open' or 'close'
-
-        Returns:
-            Price (uses close as proxy if open not available)
-        """
-        if date not in self.prices.index or symbol not in self.prices.columns:
-            return np.nan
-
-        # In this simple version, we only have adjusted close
-        # In production, you'd have OHLC data
-        return self.prices.loc[date, symbol]
-
-    def compute_costs(self, entry_price: float, shares: float) -> float:
-        """
-        Compute transaction costs.
-
-        Args:
-            entry_price: Entry price
-            shares: Number of shares
-
-        Returns:
-            Total costs
-        """
-        position_value = entry_price * abs(shares)
-        costs = position_value * (self.costs_bps + self.slippage_bps) / 10000
-        return costs
-
-    def execute_trade(
-        self,
-        date: pd.Timestamp,
-        symbol: str,
-        direction: int
-    ) -> Trade:
-        """
-        Execute a single trade.
-
-        Args:
-            date: Trade date
-            symbol: Ticker symbol
-            direction: 1 for long, -1 for short
-
-        Returns:
-            Trade record
-        """
-        # Get prices (using close as proxy for open)
-        entry_price = self.get_price(date, symbol, self.entry)
-        exit_price = self.get_price(date, symbol, self.exit)
-
-        if np.isnan(entry_price) or np.isnan(exit_price):
-            # Can't execute trade
-            return None
-
-        # Calculate position size
-        current_equity = self.equity_curve[-1]
-        position_value = current_equity * self.position_pct
-        shares = position_value / entry_price
-
-        # Calculate costs
-        costs = self.compute_costs(entry_price, shares)
-
-        # Calculate PnL
-        if direction == 1:  # Long
-            price_return = (exit_price - entry_price) / entry_price
-        else:  # Short
-            price_return = (entry_price - exit_price) / entry_price
-
-        gross_pnl = position_value * price_return
-        net_pnl = gross_pnl - costs
-
-        trade = Trade(
-            date=date,
-            symbol=symbol,
-            direction=direction,
-            entry_price=entry_price,
-            exit_price=exit_price,
-            shares=shares,
-            pnl=net_pnl,
-            return_pct=net_pnl / current_equity,
-            costs=costs
-        )
-
-        return trade
-
-    def run_backtest(
-        self,
-        signals_by_date: Dict[pd.Timestamp, List[Tuple[Window, Signal]]]
-    ) -> Tuple[pd.DataFrame, pd.Series]:
-        """
-        Run backtest for all signals.
-
-        Args:
-            signals_by_date: Dictionary mapping dates to (window, signal) lists
-
-        Returns:
-            Tuple of (trades DataFrame, equity curve Series)
-        """
-        logger.info("Running backtest")
-
-        dates = sorted(signals_by_date.keys())
-
-        for date in dates:
-            daily_signals = signals_by_date[date]
-
-            # Filter to top signals
-            if len(daily_signals) > self.max_positions:
-                daily_signals = filter_top_signals(
-                    [s for _, s in daily_signals],
-                    [w for w, _ in daily_signals],
-                    self.max_positions
-                )
-
-            # Execute trades
-            daily_pnl = 0.0
-
-            for window, signal in daily_signals:
-                position = signal_to_position(signal, side=self.side)
-
-                if position == 0:
-                    continue
-
-                trade = self.execute_trade(date, window.symbol, position)
-
-                if trade:
-                    self.trades.append(trade)
-                    daily_pnl += trade.pnl
-
-            # Update equity
-            new_equity = self.equity_curve[-1] + daily_pnl
-            self.equity_curve.append(new_equity)
-            self.dates.append(date)
-
-        logger.info(f"Backtest complete: {len(self.trades)} trades executed")
-
-        # Convert to DataFrames
-        if self.trades:
-            trades_df = pd.DataFrame([
-                {
-                    'date': t.date,
-                    'symbol': t.symbol,
-                    'direction': 'LONG' if t.direction == 1 else 'SHORT',
-                    'entry_price': t.entry_price,
-                    'exit_price': t.exit_price,
-                    'shares': t.shares,
-                    'pnl': t.pnl,
-                    'return_pct': t.return_pct,
-                    'costs': t.costs
-                }
-                for t in self.trades
-            ])
-        else:
-            trades_df = pd.DataFrame()
-
-        equity_series = pd.Series(
-            self.equity_curve[1:],  # Skip initial equity
-            index=self.dates
-        )
-
-        return trades_df, equity_series
-
-    def save_results(
-        self,
-        trades_df: pd.DataFrame,
-        equity_series: pd.Series,
-        output_dir: str = 'results/backtests'
-    ):
-        """
-        Save backtest results.
-
-        Args:
-            trades_df: Trades DataFrame
-            equity_series: Equity curve Series
-            output_dir: Output directory
-        """
-        from pathlib import Path
-
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        # Save trades
-        if len(trades_df) > 0:
-            trades_df.to_csv(output_path / 'trades.csv', index=False)
-            logger.info(f"Saved trades to {output_path / 'trades.csv'}")
-
-        # Save equity curve
-        if len(equity_series) > 0:
-            equity_series.to_csv(output_path / 'equity_curve.csv', header=['equity'])
-            logger.info(f"Saved equity curve to {output_path / 'equity_curve.csv'}")
-
-
-def walk_forward_backtest(
-    windows: List[Window],
-    returns: pd.DataFrame,
-    prices: pd.DataFrame,
-    config: dict,
-    test_start_date: pd.Timestamp,
-    initial_capital: float = 100000.0
-) -> Tuple[pd.DataFrame, pd.Series, Dict]:
-    """
-    Perform walk-forward backtest.
+    Generate trading signals for all symbols on a given date.
 
     Args:
-        windows: All available windows
-        returns: Returns DataFrame
-        prices: Prices DataFrame
-        config: Configuration dictionary
-        test_start_date: Start date for testing
-        initial_capital: Starting capital
+        returns_df: DataFrame with returns (index=dates, columns=symbols)
+        windows_bank: DataFrame with all windows [symbol, start_date, end_date, features, label]
+        cfg: Configuration dictionary
+        date: Date for which to generate signals
 
     Returns:
-        Tuple of (trades DataFrame, equity Series, metrics dict)
+        DataFrame with columns [symbol, p_up, signal, confidence]
+
+    Process:
+        1. For each symbol available on date-1:
+           - Form target window: last X returns up to date-1
+           - Normalize using cfg.windows.normalization
+        2. Rank analogs from windows_bank with cutoff_date=date-1 (no leakage)
+        3. Vote on analogs to generate signal
+        4. Return signals DataFrame
+
+    Notes:
+        - cutoff_date=date-1 ensures no look-ahead bias
+        - Only generates signals for symbols with sufficient history
+        - ABSTAIN signals are included in output
+
+    Example:
+        >>> signals = generate_daily_signals(returns_df, windows_bank, cfg, pd.Timestamp('2024-01-15'))
+        >>> print(signals)
+           symbol   p_up signal  confidence
+        0   AAPL   0.75     UP        0.25
+        1   MSFT   0.45  ABSTAIN      0.05
     """
-    from src.modeling.similarity import find_top_analogs
-    from src.modeling.vote import generate_signal, signal_to_position
-    from src.evals.metrics import compute_returns_metrics, compute_trade_statistics
+    window_length = cfg['windows']['length']
+    normalization = cfg['windows']['normalization']
+    similarity_metric = cfg['similarity']['metric']
+    top_k = cfg['similarity']['top_k']
+    min_sim = cfg['similarity'].get('min_sim', 0.0)
+    vote_scheme = cfg['vote']['scheme']
+    vote_threshold = cfg['vote']['threshold']
+    abstain_if_below_k = cfg['vote']['abstain_if_below_k']
 
-    logger.info(f"Walk-forward backtest starting from {test_start_date.date()}")
+    # Cutoff date: use date-1 to prevent look-ahead bias
+    cutoff_date = date - pd.Timedelta(days=1)
 
-    # Initialize engine
-    engine = BacktestEngine(prices, returns, config, initial_capital)
+    logger.debug(f"Generating signals for {date.date()}, cutoff_date={cutoff_date.date()}")
 
-    # Group windows by symbol and end date
-    windows_by_date_symbol = {}
-    for w in windows:
-        key = (w.end_date, w.symbol)
-        windows_by_date_symbol[key] = w
+    signals_list = []
 
-    # Get test dates
-    test_dates = returns.index[returns.index >= test_start_date]
+    # For each symbol in returns
+    for symbol in returns_df.columns:
+        # Get returns up to cutoff_date
+        symbol_returns = returns_df.loc[:cutoff_date, symbol]
 
-    signals_by_date = {}
+        # Need at least window_length returns
+        if len(symbol_returns) < window_length:
+            continue
+
+        # Skip if recent returns have NaN
+        recent_returns = symbol_returns.iloc[-window_length:]
+        if recent_returns.isna().any():
+            continue
+
+        # Form target window (last X returns up to cutoff_date)
+        target_window = recent_returns.values
+
+        # Normalize target window
+        try:
+            target_vec = normalize_window(target_window, method=normalization)
+        except Exception as e:
+            logger.warning(f"Failed to normalize target window for {symbol} on {date.date()}: {e}")
+            continue
+
+        # Rank analogs with cutoff_date (no look-ahead)
+        analogs_df = rank_analogs(
+            target_vec=target_vec,
+            bank_df=windows_bank,
+            cutoff_date=cutoff_date,
+            metric=similarity_metric,
+            top_k=top_k,
+            min_sim=min_sim,
+            exclude_symbol=symbol  # Don't match to own history
+        )
+
+        # Vote on analogs
+        vote_result = vote(
+            analogs_df=analogs_df,
+            scheme=vote_scheme,
+            threshold=vote_threshold,
+            abstain_if_below_k=abstain_if_below_k
+        )
+
+        # Add to signals
+        signals_list.append({
+            'symbol': symbol,
+            'p_up': vote_result['p_up'],
+            'signal': vote_result['signal'],
+            'confidence': vote_result['confidence']
+        })
+
+    # Convert to DataFrame
+    signals_df = pd.DataFrame(signals_list)
+
+    if len(signals_df) > 0:
+        # Log summary
+        signal_counts = signals_df['signal'].value_counts().to_dict()
+        logger.debug(f"Generated {len(signals_df)} signals: {signal_counts}")
+
+    return signals_df
+
+
+def run_backtest(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Run complete walk-forward backtest.
+
+    Args:
+        cfg: Configuration dictionary with:
+            - data.start_date, data.end_date, data.test_start_date
+            - windows.length, windows.normalization
+            - similarity.metric, similarity.top_k, similarity.min_sim
+            - vote.scheme, vote.threshold, vote.abstain_if_below_k
+            - backtest.max_positions, backtest.costs_bps, backtest.slippage_bps
+
+    Returns:
+        Dictionary with summary metrics
+
+    Process:
+        1. Load returns and windows bank
+        2. Walk from test_start_date to end_date:
+           - Generate signals for each day
+           - Pick up to max_positions by confidence
+           - Enter at open, exit at close (same-day)
+           - Apply costs and slippage
+        3. Save results:
+           - trades.csv: All trades
+           - equity.csv: Equity curve
+           - summary.json: Performance metrics
+        4. Return summary
+
+    Notes:
+        - Uses data.test_start_date to split training/test
+        - Only windows with end_date < signal_date are used (no leakage)
+        - Creates timestamped output directory: results/backtests/<timestamp>/
+
+    Example:
+        >>> cfg = load_config('config.yaml')
+        >>> summary = run_backtest(cfg)
+        >>> print(f"Sharpe: {summary['sharpe']:.2f}")
+        >>> print(f"Total Return: {summary['total_return']:.2f}")
+    """
+    logger.info("Starting backtest")
+
+    # Load data
+    returns_df = pd.read_parquet('data/processed/returns.parquet')
+    windows_bank = pd.read_parquet('data/processed/windows.parquet')
+
+    logger.info(f"Loaded {len(returns_df)} days of returns for {len(returns_df.columns)} symbols")
+    logger.info(f"Loaded {len(windows_bank)} windows")
+
+    # Apply light mode if enabled
+    light_mode = cfg.get('light_mode', {})
+    if light_mode.get('enabled', False):
+        logger.info("=" * 60)
+        logger.info("LIGHT MODE ENABLED - Using reduced dataset")
+        logger.info("=" * 60)
+
+        # Get top N stocks by market cap (assuming they appear first in columns)
+        top_n = light_mode.get('top_n_stocks', 50)
+        selected_symbols = returns_df.columns[:top_n].tolist()
+
+        logger.info(f"Selected top {len(selected_symbols)} stocks: {selected_symbols[:10]}...")
+
+        # Filter returns to selected symbols
+        returns_df = returns_df[selected_symbols]
+
+        # Filter windows to selected symbols
+        windows_bank = windows_bank[windows_bank['symbol'].isin(selected_symbols)]
+
+        logger.info(f"Filtered to {len(returns_df.columns)} symbols, {len(windows_bank)} windows")
+
+        # Set test period to last N days
+        test_days = light_mode.get('test_days', 10)
+        end_date = pd.Timestamp(cfg['data']['end_date'])
+
+        # Get last N business days
+        all_dates = returns_df.index
+        test_dates = all_dates[-test_days:]
+        test_start_date = test_dates[0]
+
+        logger.info(f"Light mode test period: {test_start_date.date()} to {end_date.date()} ({len(test_dates)} days)")
+        logger.info("=" * 60)
+    else:
+        # Normal mode: use configured date range
+        test_start_date = pd.Timestamp(cfg['data']['test_start_date'])
+        end_date = pd.Timestamp(cfg['data']['end_date'])
+
+        # Filter returns to test period
+        test_dates = returns_df.loc[test_start_date:end_date].index
+
+        logger.info(f"Test period: {test_start_date.date()} to {end_date.date()} ({len(test_dates)} days)")
+
+    # Backtest parameters
+    max_positions = cfg['backtest']['max_positions']
+    costs_bps = cfg['backtest']['costs_bps']
+    slippage_bps = cfg['backtest']['slippage_bps']
+
+    # Walk through test dates
+    all_trades = []
 
     for date_idx, date in enumerate(test_dates):
-        # Get candidate pool (strictly before this date)
-        candidate_pool = [w for w in windows if w.end_date < date and w.label != -1]
+        # Generate signals for this date
+        signals_df = generate_daily_signals(returns_df, windows_bank, cfg, date)
 
-        if len(candidate_pool) < config['similarity']['top_k']:
+        if len(signals_df) == 0:
             continue
 
-        # Get target windows for this date (as of previous day)
-        target_windows = []
-        for symbol in returns.columns:
-            key = (date - pd.Timedelta(days=1), symbol)
-            if key in windows_by_date_symbol:
-                target_windows.append(windows_by_date_symbol[key])
+        # Filter out ABSTAIN signals
+        active_signals = signals_df[signals_df['signal'] != 'ABSTAIN'].copy()
 
-        if not target_windows:
+        if len(active_signals) == 0:
             continue
 
-        # Generate signals
-        daily_signals = []
+        # Sort by confidence descending and take top max_positions
+        active_signals = active_signals.sort_values('confidence', ascending=False)
+        selected_signals = active_signals.head(max_positions)
 
-        for target_window in target_windows:
-            analogs = find_top_analogs(
-                target_window,
-                candidate_pool,
-                top_k=config['similarity']['top_k'],
-                metric=config['similarity']['metric'],
-                min_similarity=config['similarity']['min_sim']
-            )
+        # Execute trades
+        for _, signal_row in selected_signals.iterrows():
+            symbol = signal_row['symbol']
+            signal_direction = signal_row['signal']
 
-            signal = generate_signal(analogs, config)
+            # Get return for this day
+            if symbol not in returns_df.columns or date not in returns_df.index:
+                continue
 
-            if signal.direction != 'ABSTAIN':
-                daily_signals.append((target_window, signal))
+            day_return = returns_df.loc[date, symbol]
 
-        if daily_signals:
-            signals_by_date[date] = daily_signals
+            if pd.isna(day_return):
+                continue
 
-        if (date_idx + 1) % 50 == 0:
-            logger.info(f"Processed {date_idx + 1}/{len(test_dates)} test dates")
+            # Compute PnL (simplified: assume 100% allocation per position)
+            # In reality, would allocate capital across positions
+            # For simplicity, assume $10,000 per position
+            notional = 10000.0
 
-    # Run backtest
-    trades_df, equity_series = engine.run_backtest(signals_by_date)
+            # Direction: UP signal = long (benefit from positive return)
+            #            DOWN signal = short (benefit from negative return)
+            if signal_direction == 'UP':
+                pnl = notional * day_return
+            elif signal_direction == 'DOWN':
+                pnl = notional * (-day_return)  # Profit from decline
+            else:
+                continue  # Skip ABSTAIN (should already be filtered)
 
-    # Compute metrics
-    metrics = {}
+            # Record trade
+            all_trades.append({
+                'date': date,
+                'symbol': symbol,
+                'signal': signal_direction,
+                'p_up': signal_row['p_up'],
+                'confidence': signal_row['confidence'],
+                'return': day_return,
+                'pnl': pnl,
+                'notional': notional
+            })
 
-    if len(trades_df) > 0:
-        # Returns metrics
-        returns_metrics = compute_returns_metrics(
-            pd.Series(trades_df['return_pct'].values)
-        )
-        metrics.update(returns_metrics)
+        # Log progress
+        if (date_idx + 1) % 50 == 0 or date_idx == len(test_dates) - 1:
+            logger.info(f"Processed {date_idx + 1}/{len(test_dates)} test dates, {len(all_trades)} trades")
 
-        # Trade statistics
-        trade_stats = compute_trade_statistics(trades_df)
-        metrics.update(trade_stats)
+    # Convert trades to DataFrame
+    if len(all_trades) == 0:
+        logger.warning("No trades executed in backtest")
+        return {
+            'total_return': 0.0,
+            'sharpe': 0.0,
+            'max_dd': 0.0,
+            'hit_rate': 0.0,
+            'n_trades': 0
+        }
+
+    trades_df = pd.DataFrame(all_trades)
+
+    logger.info(f"Backtest complete: {len(trades_df)} trades executed")
+
+    # Compute equity curve
+    equity_df = equity_from_trades(trades_df, costs_bps=costs_bps, slippage_bps=slippage_bps)
+
+    # Compute summary metrics
+    metrics = summary_metrics(equity_df, trades_df=trades_df)
+    metrics['n_trades'] = len(trades_df)
+
+    # Log summary
+    logger.info(f"Backtest summary: total_return={metrics['total_return']:.2f}, "
+                f"sharpe={metrics['sharpe']:.2f}, max_dd={metrics['max_dd']:.2%}, "
+                f"hit_rate={metrics['hit_rate']:.2%}, n_trades={metrics['n_trades']}")
 
     # Save results
-    engine.save_results(trades_df, equity_series)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output_dir = Path(f'results/backtests/{timestamp}')
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    return trades_df, equity_series, metrics
+    # Save trades
+    trades_df.to_csv(output_dir / 'trades.csv', index=False)
+    logger.info(f"Saved trades to {output_dir / 'trades.csv'}")
+
+    # Save equity curve
+    equity_df.to_csv(output_dir / 'equity.csv')
+    logger.info(f"Saved equity curve to {output_dir / 'equity.csv'}")
+
+    # Save summary
+    with open(output_dir / 'summary.json', 'w') as f:
+        # Convert numpy types to Python types for JSON serialization
+        summary_serializable = {k: float(v) if v is not None else None for k, v in metrics.items()}
+        json.dump(summary_serializable, f, indent=2)
+    logger.info(f"Saved summary to {output_dir / 'summary.json'}")
+
+    return metrics
