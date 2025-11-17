@@ -72,3 +72,10 @@ live:
   output_dir: "results/live"  # Directory for live signal output
   signal_file: "signals_{date}.csv"  # Signal filename template
   log_level: "INFO"           # Logging level: DEBUG, INFO, WARNING, ERROR
+
+paper_trading:
+  enabled: true               # Enable paper trading mode
+  initial_capital: 100000.0   # Starting capital in USD
+  position_size: 10000.0      # Notional size per position in USD
+  max_hold_days: 5            # Maximum days to hold a position
+  state_file: "data/paper_trading/portfolio_state.json"  # Portfolio state persistence
