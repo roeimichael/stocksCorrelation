@@ -118,8 +118,8 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
             success_count += 1
             continue
 
-        # Try up to 3 times with exponential backoff
-        max_retries = 3
+        # Try up to max_retries times with exponential backoff
+        max_retries = cfg['data'].get('max_retries', 3)
         for attempt in range(max_retries):
             try:
                 logger.debug(f"Downloading {symbol} (attempt {attempt + 1}/{max_retries})")
@@ -165,7 +165,8 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
                     fail_count += 1
 
         # Small delay between symbols to avoid rate limiting
-        time.sleep(0.1)
+        retry_delay = cfg['data'].get('retry_delay', 0.1)
+        time.sleep(retry_delay)
 
     logger.info(f"Fetch complete: {success_count} successful, {fail_count} failed")
 

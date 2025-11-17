@@ -101,17 +101,18 @@ def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
     logger.debug("Aligning to NYSE trading calendar")
     prices = prices.reindex(trading_dates)
 
-    # Forward-fill gaps (max 1 day)
-    logger.debug("Forward-filling gaps (max 1 day)")
-    prices_filled = prices.ffill(limit=1)
+    # Forward-fill gaps
+    forward_fill_limit = cfg['data'].get('forward_fill_limit', 1)
+    logger.debug(f"Forward-filling gaps (max {forward_fill_limit} day)")
+    prices_filled = prices.ffill(limit=forward_fill_limit)
 
     # Check data quality before computing returns
     missing_before = prices.isna().sum().sum()
     missing_after = prices_filled.isna().sum().sum()
     logger.info(f"Missing values: {missing_before} before ffill, {missing_after} after ffill (max 1 day)")
 
-    # Drop columns (symbols) with too many NaNs (e.g., >10% missing)
-    max_missing_pct = 0.10
+    # Drop columns (symbols) with too many NaNs
+    max_missing_pct = cfg['data'].get('max_missing_pct', 0.10)
     missing_pct = prices_filled.isna().sum() / len(prices_filled)
     bad_symbols = missing_pct[missing_pct > max_missing_pct].index.tolist()
 

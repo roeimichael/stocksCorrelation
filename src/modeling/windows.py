@@ -12,13 +12,14 @@ from src.core.logger import get_logger
 logger = get_logger(__name__)
 
 
-def normalize_window(vec: np.ndarray, method: str) -> np.ndarray:
+def normalize_window(vec: np.ndarray, method: str, epsilon: float = 1e-8) -> np.ndarray:
     """
     Normalize a window of returns.
 
     Args:
         vec: Array of returns (length X)
         method: Normalization method - "zscore", "rank", or "vol"
+        epsilon: Small value to prevent division by zero (default: 1e-8)
 
     Returns:
         Normalized array of same length
@@ -27,13 +28,9 @@ def normalize_window(vec: np.ndarray, method: str) -> np.ndarray:
         - zscore: (x - mean) / std with epsilon guard
         - rank: rankdata normalized to [-0.5, 0.5]
         - vol: x / (std + epsilon)
-
-    Notes:
-        - Uses eps=1e-8 to prevent division by zero
-        - For rank: converts to percentiles then centers around 0
     """
     vec = np.asarray(vec, dtype=np.float64)
-    eps = 1e-8
+    eps = epsilon
 
     if method == 'zscore':
         mean = np.mean(vec)
@@ -89,6 +86,7 @@ def build_windows(returns_df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame
     window_length = cfg['windows']['length']
     normalization = cfg['windows']['normalization']
     min_history = cfg['windows'].get('min_history_days', 250)
+    epsilon = cfg['windows'].get('epsilon', 1e-8)
 
     logger.info(f"Building windows: length={window_length}, normalization={normalization}, min_history={min_history}")
 
@@ -116,7 +114,7 @@ def build_windows(returns_df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame
 
             # Normalize window
             try:
-                features = normalize_window(window_returns, method=normalization)
+                features = normalize_window(window_returns, method=normalization, epsilon=epsilon)
             except Exception as e:
                 logger.warning(f"Failed to normalize window for {symbol} at {dates[end_idx-1]}: {e}")
                 continue

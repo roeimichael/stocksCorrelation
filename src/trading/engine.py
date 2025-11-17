@@ -89,7 +89,8 @@ def generate_daily_signals(
 
         # Normalize target window
         try:
-            target_vec = normalize_window(target_window, method=normalization)
+            epsilon = cfg['windows'].get('epsilon', 1e-8)
+            target_vec = normalize_window(target_window, method=normalization, epsilon=epsilon)
         except Exception as e:
             logger.warning(f"Failed to normalize target window for {symbol} on {date.date()}: {e}")
             continue
@@ -261,10 +262,8 @@ def run_backtest(cfg: dict[str, Any]) -> dict[str, Any]:
             if pd.isna(day_return):
                 continue
 
-            # Compute PnL (simplified: assume 100% allocation per position)
-            # In reality, would allocate capital across positions
-            # For simplicity, assume $10,000 per position
-            notional = 10000.0
+            # Compute PnL with configured notional per position
+            notional = cfg['backtest'].get('notional_per_position', 10000.0)
 
             # Direction: UP signal = long (benefit from positive return)
             #            DOWN signal = short (benefit from negative return)

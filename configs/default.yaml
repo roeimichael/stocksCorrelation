@@ -9,10 +9,19 @@ data:
   interval: "1d"              # Data frequency: "1d" for daily
   include_index: true         # Include ^GSPC in universe
 
+  # Data fetching parameters
+  max_retries: 3              # Maximum retry attempts for failed downloads
+  retry_delay: 0.1            # Delay between ticker downloads (seconds, for rate limiting)
+
+  # Data quality parameters
+  max_missing_pct: 0.10       # Maximum allowed missing data percentage (0.10 = 10%)
+  forward_fill_limit: 1       # Maximum days to forward-fill missing data
+
 windows:
   length: 10                  # X: Number of days in each pattern window
   normalization: "zscore"     # Options: "zscore", "rank", "vol", "none"
   min_history_days: 250       # Minimum trading days before creating windows
+  epsilon: 1.0e-8             # Epsilon for numerical stability in normalization
 
 similarity:
   metric: "pearson"           # Options: "pearson", "spearman", "cosine", "euclidean"
@@ -32,6 +41,7 @@ backtest:
   max_positions: 10           # Maximum concurrent positions
   position_pct: 0.10          # Position size as fraction of equity (0.10 = 10%)
   side: "both"                # Trading side: "long", "short", "both"
+  notional_per_position: 10000.0  # Notional value per position in backtest ($)
 
 monitor:
   lookback_M: 5               # Monitor last M months of performance

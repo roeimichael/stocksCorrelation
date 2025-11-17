@@ -54,6 +54,7 @@ def similarity_retention(
     window_length = cfg['windows']['length']
     normalization = cfg['windows']['normalization']
     similarity_metric = cfg['similarity']['metric']
+    epsilon = cfg['windows'].get('epsilon', 1e-8)
 
     # Get returns for symbol up to today
     if symbol not in returns_df.columns:
@@ -74,7 +75,7 @@ def similarity_retention(
         return 0.0
 
     try:
-        today_vec = normalize_window(recent_returns.values, method=normalization)
+        today_vec = normalize_window(recent_returns.values, method=normalization, epsilon=epsilon)
     except Exception as e:
         logger.warning(f"Failed to normalize today's window for {symbol}: {e}")
         return 0.0
@@ -328,6 +329,7 @@ def pattern_deviation_z(
 
     window_length = cfg['windows']['length']
     normalization = cfg['windows']['normalization']
+    epsilon = cfg['windows'].get('epsilon', 1e-8)
 
     # Get monitor config
     deviation_window = cfg.get('monitor', {}).get('deviation_window_days', 30)
@@ -353,7 +355,7 @@ def pattern_deviation_z(
     entry_window = entry_returns.iloc[-window_length:].values
 
     try:
-        entry_vec = normalize_window(entry_window, method=normalization)
+        entry_vec = normalize_window(entry_window, method=normalization, epsilon=epsilon)
     except Exception as e:
         logger.warning(f"Failed to normalize entry window: {e}")
         return 0.0
@@ -366,7 +368,7 @@ def pattern_deviation_z(
     today_window = today_returns.iloc[-window_length:].values
 
     try:
-        today_vec = normalize_window(today_window, method=normalization)
+        today_vec = normalize_window(today_window, method=normalization, epsilon=epsilon)
     except Exception as e:
         logger.warning(f"Failed to normalize today's window: {e}")
         return 0.0
@@ -387,7 +389,7 @@ def pattern_deviation_z(
     for i in range(window_length, len(all_returns)):
         window = all_returns.iloc[i-window_length:i].values
         try:
-            window_vec = normalize_window(window, method=normalization)
+            window_vec = normalize_window(window, method=normalization, epsilon=epsilon)
             dist = np.linalg.norm(window_vec - entry_vec)
             distances.append(dist)
         except Exception:
