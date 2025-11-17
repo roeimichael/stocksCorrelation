@@ -132,7 +132,7 @@ def generate_live_signals(
         try:
             epsilon = cfg['windows'].get('epsilon', 1e-8)
             target_vec = normalize_window(target_window, method=normalization, epsilon=epsilon)
-        except Exception as e:
+        except (ValueError, ZeroDivisionError) as e:
             logger.warning(f"Failed to normalize target window for {symbol}: {e}")
             continue
 

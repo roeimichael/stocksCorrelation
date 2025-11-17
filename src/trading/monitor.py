@@ -76,7 +76,7 @@ def similarity_retention(
 
     try:
         today_vec = normalize_window(recent_returns.values, method=normalization, epsilon=epsilon)
-    except Exception as e:
+    except (ValueError, ZeroDivisionError) as e:
         logger.warning(f"Failed to normalize today's window for {symbol}: {e}")
         return 0.0
 
@@ -106,7 +106,7 @@ def similarity_retention(
             sim = compute_similarity(today_vec, analog_features, similarity_metric)
             similarities.append(sim)
             weights.append(analog_sim)
-        except Exception as e:
+        except (ValueError, ZeroDivisionError) as e:
             logger.warning(f"Failed to compute similarity to analog {analog_symbol}: {e}")
             continue
 
@@ -356,7 +356,7 @@ def pattern_deviation_z(
 
     try:
         entry_vec = normalize_window(entry_window, method=normalization, epsilon=epsilon)
-    except Exception as e:
+    except (ValueError, ZeroDivisionError) as e:
         logger.warning(f"Failed to normalize entry window: {e}")
         return 0.0
 
@@ -369,7 +369,7 @@ def pattern_deviation_z(
 
     try:
         today_vec = normalize_window(today_window, method=normalization, epsilon=epsilon)
-    except Exception as e:
+    except (ValueError, ZeroDivisionError) as e:
         logger.warning(f"Failed to normalize today's window: {e}")
         return 0.0
 
@@ -392,7 +392,7 @@ def pattern_deviation_z(
             window_vec = normalize_window(window, method=normalization, epsilon=epsilon)
             dist = np.linalg.norm(window_vec - entry_vec)
             distances.append(dist)
-        except Exception:
+        except (ValueError, ZeroDivisionError):
             continue
 
     if len(distances) < 2:

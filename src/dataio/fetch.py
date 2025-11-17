@@ -155,7 +155,7 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
                 success_count += 1
                 break
 
-            except Exception as e:
+            except (ConnectionError, TimeoutError, ValueError) as e:
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
                     logger.warning(f"Error fetching {symbol}: {e}. Retrying in {wait_time}s...")

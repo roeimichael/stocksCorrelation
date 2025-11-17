@@ -44,7 +44,7 @@ def sim_pearson(a: np.ndarray, b: np.ndarray) -> float:
         if np.isnan(corr):
             return 0.0
         return float(corr)
-    except Exception as e:
+    except (ValueError, ZeroDivisionError) as e:
         logger.warning(f"Error computing Pearson correlation: {e}")
         return 0.0
 
@@ -82,7 +82,7 @@ def sim_spearman(a: np.ndarray, b: np.ndarray) -> float:
         if np.isnan(corr):
             return 0.0
         return float(corr)
-    except Exception as e:
+    except (ValueError, ZeroDivisionError) as e:
         logger.warning(f"Error computing Spearman correlation: {e}")
         return 0.0
 
@@ -215,7 +215,7 @@ def rank_analogs(
         try:
             sim = compute_similarity(target_vec, candidate_vec, metric)
             similarities.append(sim)
-        except Exception as e:
+        except (ValueError, ZeroDivisionError) as e:
             logger.warning(f"Error computing similarity for {row['symbol']} at {row['end_date']}: {e}")
             similarities.append(0.0)
 

@@ -16,6 +16,16 @@ from src.modeling.windows import normalize_window
 logger = get_logger(__name__)
 
 
+class BacktestDataError(Exception):
+    """Raised when there are issues loading or processing backtest data."""
+    pass
+
+
+class SignalGenerationError(Exception):
+    """Raised when signal generation fails."""
+    pass
+
+
 def generate_daily_signals(
     returns_df: pd.DataFrame,
     windows_bank: pd.DataFrame,
@@ -91,7 +101,7 @@ def generate_daily_signals(
         try:
             epsilon = cfg['windows'].get('epsilon', 1e-8)
             target_vec = normalize_window(target_window, method=normalization, epsilon=epsilon)
-        except Exception as e:
+        except (ValueError, ZeroDivisionError) as e:
             logger.warning(f"Failed to normalize target window for {symbol} on {date.date()}: {e}")
             continue
 
@@ -133,56 +143,30 @@ def generate_daily_signals(
     return signals_df
 
 
-def run_backtest(cfg: dict[str, Any]) -> dict[str, Any]:
-    """
-    Run complete walk-forward backtest.
+def _load_backtest_data() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load returns and windows data for backtesting."""
+    try:
+        returns_df = pd.read_parquet('data/processed/returns.parquet')
+        windows_bank = pd.read_parquet('data/processed/windows.parquet')
 
-    Args:
-        cfg: Configuration dictionary with:
-            - data.start_date, data.end_date, data.test_start_date
-            - windows.length, windows.normalization
-            - similarity.metric, similarity.top_k, similarity.min_sim
-            - vote.scheme, vote.threshold, vote.abstain_if_below_k
-            - backtest.max_positions, backtest.costs_bps, backtest.slippage_bps
+        logger.info(f"Loaded {len(returns_df)} days of returns for {len(returns_df.columns)} symbols")
+        logger.info(f"Loaded {len(windows_bank)} windows")
 
-    Returns:
-        Dictionary with summary metrics
+        return returns_df, windows_bank
+    except FileNotFoundError as e:
+        raise BacktestDataError(f"Required data files not found: {e}")
+    except Exception as e:
+        raise BacktestDataError(f"Failed to load backtest data: {e}")
 
-    Process:
-        1. Load returns and windows bank
-        2. Walk from test_start_date to end_date:
-           - Generate signals for each day
-           - Pick up to max_positions by confidence
-           - Enter at open, exit at close (same-day)
-           - Apply costs and slippage
-        3. Save results:
-           - trades.csv: All trades
-           - equity.csv: Equity curve
-           - summary.json: Performance metrics
-        4. Return summary
 
-    Notes:
-        - Uses data.test_start_date to split training/test
-        - Only windows with end_date < signal_date are used (no leakage)
-        - Creates timestamped output directory: results/backtests/<timestamp>/
-
-    Example:
-        >>> cfg = load_config('config.yaml')
-        >>> summary = run_backtest(cfg)
-        >>> print(f"Sharpe: {summary['sharpe']:.2f}")
-        >>> print(f"Total Return: {summary['total_return']:.2f}")
-    """
-    logger.info("Starting backtest")
-
-    # Load data
-    returns_df = pd.read_parquet('data/processed/returns.parquet')
-    windows_bank = pd.read_parquet('data/processed/windows.parquet')
-
-    logger.info(f"Loaded {len(returns_df)} days of returns for {len(returns_df.columns)} symbols")
-    logger.info(f"Loaded {len(windows_bank)} windows")
-
-    # Apply light mode if enabled
+def _configure_test_period(
+    cfg: dict[str, Any],
+    returns_df: pd.DataFrame,
+    windows_bank: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DatetimeIndex]:
+    """Configure test period and optionally apply light mode filtering."""
     light_mode = cfg.get('light_mode', {})
+
     if light_mode.get('enabled', False):
         logger.info("=" * 60)
         logger.info("LIGHT MODE ENABLED - Using reduced dataset")
@@ -209,9 +193,8 @@ def run_backtest(cfg: dict[str, Any]) -> dict[str, Any]:
         # Get last N business days
         all_dates = returns_df.index
         test_dates = all_dates[-test_days:]
-        test_start_date = test_dates[0]
 
-        logger.info(f"Light mode test period: {test_start_date.date()} to {end_date.date()} ({len(test_dates)} days)")
+        logger.info(f"Light mode test period: {test_dates[0].date()} to {end_date.date()} ({len(test_dates)} days)")
         logger.info("=" * 60)
     else:
         # Normal mode: use configured date range
@@ -221,103 +204,82 @@ def run_backtest(cfg: dict[str, Any]) -> dict[str, Any]:
         # Filter returns to test period
         test_dates = returns_df.loc[test_start_date:end_date].index
 
-        logger.info(f"Test period: {test_start_date.date()} to {end_date.date()} ({len(test_dates)} days)")
+        logger.info(f"Test period: {test_dates[0].date()} to {end_date.date()} ({len(test_dates)} days)")
 
-    # Backtest parameters
+    return returns_df, windows_bank, test_dates
+
+
+def _execute_trading_day(
+    date: pd.Timestamp,
+    returns_df: pd.DataFrame,
+    windows_bank: pd.DataFrame,
+    cfg: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Execute trades for a single trading day."""
+    trades = []
+
+    # Generate signals for this date
+    signals_df = generate_daily_signals(returns_df, windows_bank, cfg, date)
+
+    if len(signals_df) == 0:
+        return trades
+
+    # Filter out ABSTAIN signals
+    active_signals = signals_df[signals_df['signal'] != 'ABSTAIN'].copy()
+
+    if len(active_signals) == 0:
+        return trades
+
+    # Sort by confidence descending and take top max_positions
     max_positions = cfg['backtest']['max_positions']
-    costs_bps = cfg['backtest']['costs_bps']
-    slippage_bps = cfg['backtest']['slippage_bps']
+    active_signals = active_signals.sort_values('confidence', ascending=False)
+    selected_signals = active_signals.head(max_positions)
 
-    # Walk through test dates
-    all_trades = []
+    # Execute trades
+    notional = cfg['backtest'].get('notional_per_position', 10000.0)
 
-    for date_idx, date in enumerate(test_dates):
-        # Generate signals for this date
-        signals_df = generate_daily_signals(returns_df, windows_bank, cfg, date)
+    for _, signal_row in selected_signals.iterrows():
+        symbol = signal_row['symbol']
+        signal_direction = signal_row['signal']
 
-        if len(signals_df) == 0:
+        # Get return for this day
+        if symbol not in returns_df.columns or date not in returns_df.index:
             continue
 
-        # Filter out ABSTAIN signals
-        active_signals = signals_df[signals_df['signal'] != 'ABSTAIN'].copy()
+        day_return = returns_df.loc[date, symbol]
 
-        if len(active_signals) == 0:
+        if pd.isna(day_return):
             continue
 
-        # Sort by confidence descending and take top max_positions
-        active_signals = active_signals.sort_values('confidence', ascending=False)
-        selected_signals = active_signals.head(max_positions)
+        # Compute PnL based on signal direction
+        if signal_direction == 'UP':
+            pnl = notional * day_return
+        elif signal_direction == 'DOWN':
+            pnl = notional * (-day_return)  # Profit from decline
+        else:
+            continue  # Skip ABSTAIN (should already be filtered)
 
-        # Execute trades
-        for _, signal_row in selected_signals.iterrows():
-            symbol = signal_row['symbol']
-            signal_direction = signal_row['signal']
+        # Record trade
+        trades.append({
+            'date': date,
+            'symbol': symbol,
+            'signal': signal_direction,
+            'p_up': signal_row['p_up'],
+            'confidence': signal_row['confidence'],
+            'return': day_return,
+            'pnl': pnl,
+            'notional': notional
+        })
 
-            # Get return for this day
-            if symbol not in returns_df.columns or date not in returns_df.index:
-                continue
+    return trades
 
-            day_return = returns_df.loc[date, symbol]
 
-            if pd.isna(day_return):
-                continue
-
-            # Compute PnL with configured notional per position
-            notional = cfg['backtest'].get('notional_per_position', 10000.0)
-
-            # Direction: UP signal = long (benefit from positive return)
-            #            DOWN signal = short (benefit from negative return)
-            if signal_direction == 'UP':
-                pnl = notional * day_return
-            elif signal_direction == 'DOWN':
-                pnl = notional * (-day_return)  # Profit from decline
-            else:
-                continue  # Skip ABSTAIN (should already be filtered)
-
-            # Record trade
-            all_trades.append({
-                'date': date,
-                'symbol': symbol,
-                'signal': signal_direction,
-                'p_up': signal_row['p_up'],
-                'confidence': signal_row['confidence'],
-                'return': day_return,
-                'pnl': pnl,
-                'notional': notional
-            })
-
-        # Log progress
-        if (date_idx + 1) % 50 == 0 or date_idx == len(test_dates) - 1:
-            logger.info(f"Processed {date_idx + 1}/{len(test_dates)} test dates, {len(all_trades)} trades")
-
-    # Convert trades to DataFrame
-    if len(all_trades) == 0:
-        logger.warning("No trades executed in backtest")
-        return {
-            'total_return': 0.0,
-            'sharpe': 0.0,
-            'max_dd': 0.0,
-            'hit_rate': 0.0,
-            'n_trades': 0
-        }
-
-    trades_df = pd.DataFrame(all_trades)
-
-    logger.info(f"Backtest complete: {len(trades_df)} trades executed")
-
-    # Compute equity curve
-    equity_df = equity_from_trades(trades_df, costs_bps=costs_bps, slippage_bps=slippage_bps)
-
-    # Compute summary metrics
-    metrics = summary_metrics(equity_df, trades_df=trades_df)
-    metrics['n_trades'] = len(trades_df)
-
-    # Log summary
-    logger.info(f"Backtest summary: total_return={metrics['total_return']:.2f}, "
-                f"sharpe={metrics['sharpe']:.2f}, max_dd={metrics['max_dd']:.2%}, "
-                f"hit_rate={metrics['hit_rate']:.2%}, n_trades={metrics['n_trades']}")
-
-    # Save results
+def _save_backtest_results(
+    trades_df: pd.DataFrame,
+    equity_df: pd.DataFrame,
+    metrics: dict[str, Any]
+) -> Path:
+    """Save backtest results to timestamped directory."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     output_dir = Path(f'results/backtests/{timestamp}')
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -336,5 +298,74 @@ def run_backtest(cfg: dict[str, Any]) -> dict[str, Any]:
         summary_serializable = {k: float(v) if v is not None else None for k, v in metrics.items()}
         json.dump(summary_serializable, f, indent=2)
     logger.info(f"Saved summary to {output_dir / 'summary.json'}")
+
+    return output_dir
+
+
+def run_backtest(cfg: dict[str, Any]) -> dict[str, Any]:
+    """
+    Run complete walk-forward backtest.
+
+    Args:
+        cfg: Configuration dictionary
+
+    Returns:
+        Dictionary with summary metrics
+
+    Raises:
+        BacktestDataError: If required data files cannot be loaded
+    """
+    logger.info("Starting backtest")
+
+    # Load data
+    returns_df, windows_bank = _load_backtest_data()
+
+    # Configure test period (with optional light mode)
+    returns_df, windows_bank, test_dates = _configure_test_period(cfg, returns_df, windows_bank)
+
+    # Backtest parameters
+    costs_bps = cfg['backtest']['costs_bps']
+    slippage_bps = cfg['backtest']['slippage_bps']
+
+    # Walk through test dates and execute trades
+    all_trades = []
+
+    for date_idx, date in enumerate(test_dates):
+        day_trades = _execute_trading_day(date, returns_df, windows_bank, cfg)
+        all_trades.extend(day_trades)
+
+        # Log progress
+        if (date_idx + 1) % 50 == 0 or date_idx == len(test_dates) - 1:
+            logger.info(f"Processed {date_idx + 1}/{len(test_dates)} test dates, {len(all_trades)} trades")
+
+    # Handle no trades case
+    if len(all_trades) == 0:
+        logger.warning("No trades executed in backtest")
+        return {
+            'total_return': 0.0,
+            'sharpe': 0.0,
+            'max_dd': 0.0,
+            'hit_rate': 0.0,
+            'n_trades': 0
+        }
+
+    # Convert to DataFrame and compute metrics
+    trades_df = pd.DataFrame(all_trades)
+    logger.info(f"Backtest complete: {len(trades_df)} trades executed")
+
+    # Compute equity curve
+    equity_df = equity_from_trades(trades_df, costs_bps=costs_bps, slippage_bps=slippage_bps)
+
+    # Compute summary metrics
+    metrics = summary_metrics(equity_df, trades_df=trades_df)
+    metrics['n_trades'] = len(trades_df)
+
+    # Log summary
+    logger.info(f"Backtest summary: total_return={metrics['total_return']:.2f}, "
+                f"sharpe={metrics['sharpe']:.2f}, max_dd={metrics['max_dd']:.2%}, "
+                f"hit_rate={metrics['hit_rate']:.2%}, n_trades={metrics['n_trades']}")
+
+    # Save results
+    _save_backtest_results(trades_df, equity_df, metrics)
 
     return metrics

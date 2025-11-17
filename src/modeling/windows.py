@@ -115,7 +115,7 @@ def build_windows(returns_df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame
             # Normalize window
             try:
                 features = normalize_window(window_returns, method=normalization, epsilon=epsilon)
-            except Exception as e:
+            except (ValueError, ZeroDivisionError) as e:
                 logger.warning(f"Failed to normalize window for {symbol} at {dates[end_idx-1]}: {e}")
                 continue
 

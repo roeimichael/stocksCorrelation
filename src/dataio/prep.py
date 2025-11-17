@@ -83,7 +83,7 @@ def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
 
             price_dict[symbol] = prices
 
-        except Exception as e:
+        except (FileNotFoundError, KeyError, ValueError) as e:
             logger.error(f"Error loading {symbol}: {e}")
             skipped.append(symbol)
 
