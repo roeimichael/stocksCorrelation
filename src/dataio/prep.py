@@ -1,9 +1,8 @@
 """Data preprocessing and cleaning with trading calendar alignment."""
-from pathlib import Path
-
 import pandas as pd
 import pandas_market_calendars as mcal
 
+from src.core.constants import Paths, ValidationConstants
 from src.core.logger import get_logger
 
 
@@ -35,9 +34,7 @@ def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
         - Removes symbols with insufficient data
         - Logs data quality stats
     """
-    raw_dir = Path('data/raw')
-    processed_dir = Path('data/processed')
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    Paths.DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 
     start_date = cfg['data']['start']
     end_date = cfg['data']['end']
@@ -57,7 +54,7 @@ def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
     skipped = []
 
     for symbol in symbols:
-        symbol_file = raw_dir / f"{symbol}.parquet"
+        symbol_file = Paths.DATA_RAW / f"{symbol}.parquet"
 
         if not symbol_file.exists():
             logger.warning(f"Missing file for {symbol}, skipping")
@@ -102,7 +99,7 @@ def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
     prices = prices.reindex(trading_dates)
 
     # Forward-fill gaps
-    forward_fill_limit = cfg['data'].get('forward_fill_limit', 1)
+    forward_fill_limit = cfg['data'].get('forward_fill_limit', ValidationConstants.FORWARD_FILL_LIMIT)
     logger.debug(f"Forward-filling gaps (max {forward_fill_limit} day)")
     prices_filled = prices.ffill(limit=forward_fill_limit)
 
@@ -112,7 +109,7 @@ def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
     logger.info(f"Missing values: {missing_before} before ffill, {missing_after} after ffill (max 1 day)")
 
     # Drop columns (symbols) with too many NaNs
-    max_missing_pct = cfg['data'].get('max_missing_pct', 0.10)
+    max_missing_pct = cfg['data'].get('max_missing_pct', ValidationConstants.MAX_MISSING_PCT)
     missing_pct = prices_filled.isna().sum() / len(prices_filled)
     bad_symbols = missing_pct[missing_pct > max_missing_pct].index.tolist()
 
@@ -148,8 +145,7 @@ def prepare_returns(symbols: list[str], cfg: dict) -> pd.DataFrame:
     logger.debug(f"Returns summary: mean={returns.mean().mean():.6f}, std={returns.std().mean():.6f}")
 
     # Save to parquet
-    output_file = processed_dir / 'returns.parquet'
-    returns.to_parquet(output_file)
-    logger.info(f"Saved returns to {output_file}")
+    returns.to_parquet(Paths.RETURNS_FILE)
+    logger.info(f"Saved returns to {Paths.RETURNS_FILE}")
 
     return returns

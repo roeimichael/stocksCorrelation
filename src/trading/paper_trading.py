@@ -1,11 +1,11 @@
 """Paper trading engine for simulating live trades without real money."""
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from src.core.constants import Paths, TradingConstants
 from src.core.logger import get_logger
 
 
@@ -76,13 +76,17 @@ class Position:
 class PaperTradingPortfolio:
     """Manages portfolio state for paper trading."""
 
-    def __init__(self, initial_capital: float = 100000.0, state_file: str = 'data/paper_trading/portfolio_state.json'):
+    def __init__(
+        self,
+        initial_capital: float = TradingConstants.DEFAULT_INITIAL_CAPITAL,
+        state_file: str = None
+    ):
         self.initial_capital = initial_capital
         self.cash = initial_capital
         self.positions: dict[str, Position] = {}
         self.closed_trades: list[dict] = []
         self.daily_pnl: list[dict] = []
-        self.state_file = Path(state_file)
+        self.state_file = Paths.PORTFOLIO_STATE if state_file is None else Paths.DATA_PAPER_TRADING / state_file
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
     def save_state(self) -> None:

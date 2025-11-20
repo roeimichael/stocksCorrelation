@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.core.constants import MonitoringConstants, TradingConstants
 from src.core.logger import get_logger
 from src.modeling.similarity import compute_similarity
 from src.modeling.windows import normalize_window
@@ -54,7 +55,7 @@ def similarity_retention(
     window_length = cfg['windows']['length']
     normalization = cfg['windows']['normalization']
     similarity_metric = cfg['similarity']['metric']
-    epsilon = cfg['windows'].get('epsilon', 1e-8)
+    epsilon = cfg['windows'].get('epsilon', TradingConstants.EPSILON)
 
     # Get returns for symbol up to today
     if symbol not in returns_df.columns:
@@ -231,9 +232,9 @@ def correlation_decay(
         logger.warning(f"No analogs found for {symbol}")
         return 0.0, 0.0
 
-    # Get monitoring window length (default 20 days)
-    corr_window = cfg.get('monitor', {}).get('corr_window_days', 20)
-    lookback_days = cfg.get('monitor', {}).get('lookback_days', 3)
+    # Get monitoring window length
+    corr_window = cfg.get('monitor', {}).get('corr_window_days', MonitoringConstants.CORR_WINDOW_DAYS)
+    lookback_days = cfg.get('monitor', {}).get('lookback_days', MonitoringConstants.CORR_LOOKBACK_DAYS)
 
     # Get returns for symbol
     if symbol not in returns_df.columns:
@@ -329,10 +330,10 @@ def pattern_deviation_z(
 
     window_length = cfg['windows']['length']
     normalization = cfg['windows']['normalization']
-    epsilon = cfg['windows'].get('epsilon', 1e-8)
+    epsilon = cfg['windows'].get('epsilon', TradingConstants.EPSILON)
 
     # Get monitor config
-    deviation_window = cfg.get('monitor', {}).get('deviation_window_days', 30)
+    deviation_window = cfg.get('monitor', {}).get('deviation_window_days', MonitoringConstants.DEVIATION_WINDOW_DAYS)
 
     # Get returns for symbol
     if symbol not in returns_df.columns:
@@ -448,16 +449,16 @@ def classify_alert(
     thresholds = cfg.get('monitor', {}).get('thresholds', {})
 
     # Red thresholds (most severe)
-    sr_floor_red = thresholds.get('sr_floor_red', 0.3)
-    dc_floor_red = thresholds.get('dc_floor_red', 0.4)
-    cd_drop_alert_red = thresholds.get('cd_drop_alert_red', -0.3)
-    pds_z_alert_red = thresholds.get('pds_z_alert_red', 3.0)
+    sr_floor_red = thresholds.get('sr_floor_red', MonitoringConstants.SR_FLOOR_RED)
+    dc_floor_red = thresholds.get('dc_floor_red', MonitoringConstants.DC_FLOOR_RED)
+    cd_drop_alert_red = thresholds.get('cd_drop_alert_red', MonitoringConstants.CD_DROP_ALERT_RED)
+    pds_z_alert_red = thresholds.get('pds_z_alert_red', MonitoringConstants.PDS_Z_ALERT_RED)
 
     # Yellow thresholds (warning)
-    sr_floor_yellow = thresholds.get('sr_floor_yellow', 0.5)
-    dc_floor_yellow = thresholds.get('dc_floor_yellow', 0.5)
-    cd_drop_alert_yellow = thresholds.get('cd_drop_alert_yellow', -0.2)
-    pds_z_alert_yellow = thresholds.get('pds_z_alert_yellow', 2.0)
+    sr_floor_yellow = thresholds.get('sr_floor_yellow', MonitoringConstants.SR_FLOOR_YELLOW)
+    dc_floor_yellow = thresholds.get('dc_floor_yellow', MonitoringConstants.DC_FLOOR_YELLOW)
+    cd_drop_alert_yellow = thresholds.get('cd_drop_alert_yellow', MonitoringConstants.CD_DROP_ALERT_YELLOW)
+    pds_z_alert_yellow = thresholds.get('pds_z_alert_yellow', MonitoringConstants.PDS_Z_ALERT_YELLOW)
 
     # Check for RED conditions
     if (sr < sr_floor_red or

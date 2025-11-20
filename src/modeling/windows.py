@@ -1,18 +1,18 @@
 """Window construction and normalization for pattern matching."""
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from scipy.stats import rankdata
 
+from src.core.constants import Paths, TradingConstants
 from src.core.logger import get_logger
 
 
 logger = get_logger(__name__)
 
 
-def normalize_window(vec: np.ndarray, method: str, epsilon: float = 1e-8) -> np.ndarray:
+def normalize_window(vec: np.ndarray, method: str, epsilon: float = TradingConstants.EPSILON) -> np.ndarray:
     """
     Normalize a window of returns.
 
@@ -85,8 +85,8 @@ def build_windows(returns_df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame
     """
     window_length = cfg['windows']['length']
     normalization = cfg['windows']['normalization']
-    min_history = cfg['windows'].get('min_history_days', 250)
-    epsilon = cfg['windows'].get('epsilon', 1e-8)
+    min_history = cfg['windows'].get('min_history_days', TradingConstants.DEFAULT_MIN_HISTORY_DAYS)
+    epsilon = cfg['windows'].get('epsilon', TradingConstants.EPSILON)
 
     logger.info(f"Building windows: length={window_length}, normalization={normalization}, min_history={min_history}")
 
@@ -154,11 +154,8 @@ def build_windows(returns_df: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame
         logger.info(f"Label distribution: {label_counts.to_dict()}")
 
     # Save to parquet
-    output_dir = Path('data/processed')
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_file = output_dir / 'windows.parquet'
-
-    windows_df.to_parquet(output_file)
-    logger.info(f"Saved windows to {output_file}")
+    Paths.DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
+    windows_df.to_parquet(Paths.WINDOWS_FILE)
+    logger.info(f"Saved windows to {Paths.WINDOWS_FILE}")
 
     return windows_df

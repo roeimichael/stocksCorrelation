@@ -8,6 +8,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.config import load_config
+from src.core.constants import Paths, TradingConstants
+from src.core.data_loader import load_returns
 from src.core.logger import get_logger
 from src.trading.paper_trading import PaperTradingPortfolio
 
@@ -64,8 +66,8 @@ def run_strategy(strategy_name: str, strategy_config: dict, base_config: dict) -
     cfg['vote'].update(strategy_config.get('vote', {}))
 
     # Use separate state file for each strategy
-    state_file = f"data/paper_trading/{strategy_name}_portfolio_state.json"
-    initial_capital = cfg.get('paper_trading', {}).get('initial_capital', 100000.0)
+    state_file = f"{strategy_name}_portfolio_state.json"
+    initial_capital = cfg.get('paper_trading', {}).get('initial_capital', TradingConstants.DEFAULT_INITIAL_CAPITAL)
 
     # Initialize portfolio for this strategy
     portfolio = PaperTradingPortfolio(
@@ -84,7 +86,7 @@ def run_strategy(strategy_name: str, strategy_config: dict, base_config: dict) -
     today = datetime.now().strftime('%Y-%m-%d')
 
     # Get current prices
-    returns_df = pd.read_parquet('data/processed/returns.parquet')
+    returns_df = load_returns()
     all_symbols = returns_df.columns.tolist()
     for symbol in portfolio.positions.keys():
         if symbol not in all_symbols:
@@ -114,7 +116,7 @@ def run_strategy(strategy_name: str, strategy_config: dict, base_config: dict) -
 
     # Open new positions
     max_positions = cfg['backtest']['max_positions']
-    position_size = cfg.get('paper_trading', {}).get('position_size', 10000.0)
+    position_size = cfg.get('paper_trading', {}).get('position_size', TradingConstants.DEFAULT_POSITION_SIZE)
     open_slots = max_positions - len(portfolio.positions)
 
     if open_slots > 0 and len(signals_df) > 0:
@@ -139,7 +141,7 @@ def run_strategy(strategy_name: str, strategy_config: dict, base_config: dict) -
     portfolio.save_state()
 
     # Save logs to strategy-specific directory
-    output_dir = Path(f'results/paper_trading/{strategy_name}')
+    output_dir = Paths.RESULTS_PAPER_TRADING / strategy_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if portfolio.closed_trades:
@@ -193,13 +195,13 @@ def generate_comparison_report(summaries: list[dict]) -> None:
               f"{row['num_open_positions']:>11} {row['num_closed_trades']:>9} {win_rate:>9}")
 
     # Save comparison to CSV
-    output_file = Path('results/paper_trading/strategy_comparison.csv')
+    output_file = Paths.RESULTS_PAPER_TRADING / 'strategy_comparison.csv'
     comparison_df.to_csv(output_file, index=False)
     logger.info(f"\nComparison saved to: {output_file}")
 
     # Identify best strategy
     best_strategy = comparison_df.iloc[0]
-    logger.info(f"\n🏆 BEST PERFORMING STRATEGY: {best_strategy['strategy']}")
+    logger.info(f"\nBEST PERFORMING STRATEGY: {best_strategy['strategy']}")
     logger.info(f"   Return: {best_strategy['total_return_pct']:.2f}%")
     logger.info(f"   P&L: ${best_strategy['total_pnl']:,.2f}")
 
@@ -220,7 +222,7 @@ if __name__ == '__main__':
         # Generate comparison report
         generate_comparison_report(summaries)
 
-        logger.info("\n✅ Multi-strategy paper trading completed successfully!")
+        logger.info("\nMulti-strategy paper trading completed successfully!")
 
     except Exception as e:
         logger.error(f"Multi-strategy paper trading failed: {e}")

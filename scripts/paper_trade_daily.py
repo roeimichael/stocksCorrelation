@@ -10,6 +10,8 @@ import yfinance as yf
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.config import load_config
+from src.core.constants import Paths, TradingConstants
+from src.core.data_loader import load_returns, load_windows
 from src.core.logger import get_logger
 from src.dataio.live_append import append_latest_data
 from src.modeling.similarity import rank_analogs
@@ -49,12 +51,12 @@ def generate_signals(cfg: dict) -> pd.DataFrame:
     logger.info("Generating trading signals...")
 
     # Load data
-    returns_df = pd.read_parquet('data/processed/returns.parquet')
-    windows_bank = pd.read_parquet('data/processed/windows.parquet')
+    returns_df = load_returns()
+    windows_bank = load_windows()
 
     window_length = cfg['windows']['length']
     normalization = cfg['windows']['normalization']
-    epsilon = cfg['windows'].get('epsilon', 1e-8)
+    epsilon = cfg['windows'].get('epsilon', TradingConstants.EPSILON)
     similarity_metric = cfg['similarity']['metric']
     top_k = cfg['similarity']['top_k']
     min_sim = cfg['similarity'].get('min_sim', 0.0)
@@ -131,12 +133,12 @@ def run_daily_paper_trading(cfg: dict) -> None:
     logger.info("=" * 60)
 
     # Initialize portfolio
-    initial_capital = cfg.get('paper_trading', {}).get('initial_capital', 100000.0)
+    initial_capital = cfg.get('paper_trading', {}).get('initial_capital', TradingConstants.DEFAULT_INITIAL_CAPITAL)
     portfolio = PaperTradingPortfolio(initial_capital=initial_capital)
     portfolio.load_state()
 
     # Get current prices for all symbols
-    returns_df = pd.read_parquet('data/processed/returns.parquet')
+    returns_df = load_returns()
     all_symbols = returns_df.columns.tolist()
 
     # Add symbols from open positions
@@ -174,7 +176,7 @@ def run_daily_paper_trading(cfg: dict) -> None:
 
     # Execute new trades (respect max_positions limit)
     max_positions = cfg['backtest']['max_positions']
-    position_size = cfg.get('paper_trading', {}).get('position_size', 10000.0)
+    position_size = cfg.get('paper_trading', {}).get('position_size', TradingConstants.DEFAULT_POSITION_SIZE)
 
     open_slots = max_positions - len(portfolio.positions)
 
@@ -224,7 +226,7 @@ def run_daily_paper_trading(cfg: dict) -> None:
 
 def save_trades_log(portfolio: PaperTradingPortfolio, today: str) -> None:
     """Save trades and daily P&L to CSV files."""
-    output_dir = Path('results/paper_trading')
+    output_dir = Paths.RESULTS_PAPER_TRADING
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save closed trades

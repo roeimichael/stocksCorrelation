@@ -4,6 +4,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.core.constants import TradingConstants, TRADING_DAYS_PER_YEAR
 from src.core.logger import get_logger
 
 
@@ -70,14 +71,14 @@ def equity_from_trades(
     # Copy to avoid modifying original
     df = trades_df.copy()
 
-    # Compute total cost rate in decimal
-    total_cost_rate = (costs_bps + slippage_bps) / 10000.0
+    # Compute total cost rate in decimal (bps to decimal)
+    bps_to_decimal = 10000.0
+    total_cost_rate = (costs_bps + slippage_bps) / bps_to_decimal
 
     # Estimate notional if not provided
     if 'notional' not in df.columns:
         # Rough estimate: notional = abs(pnl) / expected_return
-        # Assuming ~1% expected return per trade
-        df['notional'] = df['pnl'].abs() / 0.01
+        df['notional'] = df['pnl'].abs() / TradingConstants.EXPECTED_RETURN_PER_TRADE
         logger.debug("Estimated notional from PnL (no notional column provided)")
 
     # Compute cost per trade
@@ -172,7 +173,7 @@ def summary_metrics(
 
         if std_daily_pnl > 0:
             # Daily Sharpe ratio, annualized
-            sharpe = (mean_daily_pnl / std_daily_pnl) * np.sqrt(252)
+            sharpe = (mean_daily_pnl / std_daily_pnl) * np.sqrt(TRADING_DAYS_PER_YEAR)
         else:
             sharpe = 0.0
     else:

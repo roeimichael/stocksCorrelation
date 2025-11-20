@@ -1,11 +1,11 @@
 """Minimal daily backtesting engine."""
 import json
-from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from src.core.constants import FileFormats, Paths
+from src.core.data_loader import ensure_directory, load_returns_and_windows
 from src.core.logger import get_logger
 from src.evals.metrics import equity_from_trades, summary_metrics
 from src.modeling.similarity import rank_analogs
@@ -146,13 +146,7 @@ def generate_daily_signals(
 def _load_backtest_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Load returns and windows data for backtesting."""
     try:
-        returns_df = pd.read_parquet('data/processed/returns.parquet')
-        windows_bank = pd.read_parquet('data/processed/windows.parquet')
-
-        logger.info(f"Loaded {len(returns_df)} days of returns for {len(returns_df.columns)} symbols")
-        logger.info(f"Loaded {len(windows_bank)} windows")
-
-        return returns_df, windows_bank
+        return load_returns_and_windows()
     except FileNotFoundError as e:
         raise BacktestDataError(f"Required data files not found: {e}")
     except Exception as e:
@@ -278,11 +272,12 @@ def _save_backtest_results(
     trades_df: pd.DataFrame,
     equity_df: pd.DataFrame,
     metrics: dict[str, Any]
-) -> Path:
+) -> Paths:
     """Save backtest results to timestamped directory."""
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    output_dir = Path(f'results/backtests/{timestamp}')
-    output_dir.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime
+    timestamp = datetime.now().strftime(FileFormats.TIMESTAMP_FORMAT)
+    output_dir = Paths.RESULTS_BACKTESTS / timestamp
+    ensure_directory(output_dir)
 
     # Save trades
     trades_df.to_csv(output_dir / 'trades.csv', index=False)

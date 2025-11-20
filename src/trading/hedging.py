@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.core.constants import HedgingConstants, MonitoringConstants, TradingConstants
 from src.core.logger import get_logger
 from src.modeling.similarity import compute_similarity
 
@@ -50,8 +51,8 @@ def select_hedge_basket(
         Securities with sim = -0.8 are stronger hedges than sim = -0.2.
     """
     hedge_config = cfg.get('hedge', {})
-    top_k = hedge_config.get('basket_size', 10)
-    min_neg_sim = hedge_config.get('min_neg_sim', -0.1)  # Minimum negative similarity to consider
+    top_k = hedge_config.get('basket_size', HedgingConstants.DEFAULT_BASKET_SIZE)
+    min_neg_sim = hedge_config.get('min_neg_sim', HedgingConstants.DEFAULT_MIN_NEG_SIM)
     metric = cfg['similarity']['metric']
 
     target_vec = np.asarray(target_vec, dtype=np.float64)
@@ -152,8 +153,8 @@ def size_hedge(
         (Need 2x the long position to match volatility exposure)
     """
     hedge_config = cfg.get('hedge', {})
-    target_ratio = hedge_config.get('target_ratio', 1.0)
-    eps = hedge_config.get('vol_eps', 1e-6)
+    target_ratio = hedge_config.get('target_ratio', HedgingConstants.DEFAULT_TARGET_RATIO)
+    eps = hedge_config.get('vol_eps', TradingConstants.VOL_EPSILON)
 
     # Prevent division by zero
     vol_basket_safe = max(vol_basket, eps)
@@ -192,7 +193,7 @@ def needs_rebalance(
         - Return True if any trigger condition is met
     """
     hedge_config = cfg.get('hedge', {})
-    rebalance_days = hedge_config.get('rebalance_days', 5)
+    rebalance_days = hedge_config.get('rebalance_days', HedgingConstants.REBALANCE_DAYS)
 
     # Check if position has hedge info
     hedge_info = position.get('hedge', {})
@@ -223,8 +224,8 @@ def needs_rebalance(
     if not available_hedges:
         return False
 
-    # Get recent returns (last 20 days)
-    corr_window = cfg.get('monitor', {}).get('corr_window_days', 20)
+    # Get recent returns
+    corr_window = cfg.get('monitor', {}).get('corr_window_days', MonitoringConstants.CORR_WINDOW_DAYS)
 
     try:
         symbol_returns = returns_df.loc[:current_date, symbol].tail(corr_window)
@@ -275,7 +276,7 @@ def compute_hedge_volatilities(
         2. Compute standard deviation of returns
         3. Return as volatilities
     """
-    vol_window = cfg.get('hedge', {}).get('vol_window_days', 20)
+    vol_window = cfg.get('hedge', {}).get('vol_window_days', HedgingConstants.VOL_WINDOW_DAYS)
 
     # Get returns for symbol
     if symbol not in returns_df.columns:
@@ -368,7 +369,7 @@ def create_hedge_info(
     )
 
     # Compute entry correlation
-    corr_window = cfg.get('monitor', {}).get('corr_window_days', 20)
+    corr_window = cfg.get('monitor', {}).get('corr_window_days', MonitoringConstants.CORR_WINDOW_DAYS)
     try:
         symbol_returns = returns_df.loc[:current_date, symbol].tail(corr_window)
         hedge_returns_df = returns_df.loc[:current_date, hedge_symbols].tail(corr_window)
@@ -392,7 +393,7 @@ def create_hedge_info(
     logger.info(f"Created hedge for {symbol}:")
     logger.info(f"  Basket size: {len(hedge_basket)} securities")
     logger.info(f"  Hedge notional: ${hedge_notional:,.2f}")
-    logger.info(f"  Vol ratio: {vol_long/max(vol_basket, 1e-6):.2f}")
+    logger.info(f"  Vol ratio: {vol_long/max(vol_basket, TradingConstants.VOL_EPSILON):.2f}")
     logger.info(f"  Entry correlation: {entry_corr:.3f}")
 
     return hedge_info

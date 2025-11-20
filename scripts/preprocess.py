@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pandas as pd
 import yaml
 
+from src.core.constants import Paths
 from src.core.logger import get_logger
 from src.dataio.fetch import fetch_prices, fetch_universe
 from src.dataio.prep import prepare_returns
@@ -37,19 +38,17 @@ def check_existing_data():
         'returns_last_date': None
     }
 
-    prices_path = Path('data/processed/prices_clean.parquet')
-    if prices_path.exists():
+    if Paths.PRICES_FILE.exists():
         try:
-            prices_df = pd.read_parquet(prices_path)
+            prices_df = pd.read_parquet(Paths.PRICES_FILE)
             status['prices_exists'] = True
             status['prices_last_date'] = prices_df.index.max()
         except Exception as e:
             logger.warning(f"Could not read existing prices: {e}")
 
-    returns_path = Path('data/processed/returns.parquet')
-    if returns_path.exists():
+    if Paths.RETURNS_FILE.exists():
         try:
-            returns_df = pd.read_parquet(returns_path)
+            returns_df = pd.read_parquet(Paths.RETURNS_FILE)
             status['returns_exists'] = True
             status['returns_last_date'] = returns_df.index.max()
         except Exception as e:

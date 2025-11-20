@@ -10,6 +10,7 @@ sys.path.insert(0, str(project_root))
 
 import yaml
 
+from src.core.constants import Paths
 from src.core.logger import get_logger
 from src.trading.engine import run_backtest
 
@@ -17,17 +18,20 @@ from src.trading.engine import run_backtest
 logger = get_logger(__name__)
 
 
-def load_config(config_path: str = 'config.yaml') -> dict:
+def load_config(config_path: str = None) -> dict:
     """
     Load configuration from YAML file.
 
     Args:
-        config_path: Path to config file
+        config_path: Path to config file (default: config.yaml in project root)
 
     Returns:
         Configuration dictionary
     """
-    config_file = Path(config_path)
+    if config_path is None:
+        config_file = Paths.ROOT / 'config.yaml'
+    else:
+        config_file = Path(config_path)
 
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")

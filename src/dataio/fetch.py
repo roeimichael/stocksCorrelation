@@ -1,10 +1,10 @@
 """Fetch stock data from external sources."""
 import time
-from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
 
+from src.core.constants import Paths, ValidationConstants
 from src.core.logger import get_logger
 
 
@@ -97,8 +97,7 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
         - Trading calendar alignment (NYSE via pandas_market_calendars)
         - Progress logging
     """
-    output_dir = Path('data/raw')
-    output_dir.mkdir(parents=True, exist_ok=True)
+    Paths.DATA_RAW.mkdir(parents=True, exist_ok=True)
 
     start_date = cfg['data']['start']
     end_date = cfg['data']['end']
@@ -110,7 +109,7 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
     fail_count = 0
 
     for symbol in symbols:
-        output_file = output_dir / f"{symbol}.parquet"
+        output_file = Paths.DATA_RAW / f"{symbol}.parquet"
 
         # Skip if already downloaded
         if output_file.exists():
@@ -119,7 +118,7 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
             continue
 
         # Try up to max_retries times with exponential backoff
-        max_retries = cfg['data'].get('max_retries', 3)
+        max_retries = cfg['data'].get('max_retries', ValidationConstants.DEFAULT_MAX_RETRIES)
         for attempt in range(max_retries):
             try:
                 logger.debug(f"Downloading {symbol} (attempt {attempt + 1}/{max_retries})")
@@ -157,7 +156,7 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
 
             except (ConnectionError, TimeoutError, ValueError) as e:
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    wait_time = ValidationConstants.RETRY_BACKOFF_BASE ** attempt
                     logger.warning(f"Error fetching {symbol}: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
