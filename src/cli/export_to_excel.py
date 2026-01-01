@@ -129,4 +129,4 @@ def export_to_excel(output_file: str | None = None) -> None:
 
 if __name__ == '__main__':
     export_to_excel()
-    print("Excel export complete!")
+    logger.info("Excel export complete!")

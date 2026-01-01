@@ -27,7 +27,6 @@ def run_preprocess(args):
     """Run data preprocessing pipeline."""
     from src.cli.preprocess import main as preprocess_main
 
-    logger.info("Running preprocessing pipeline...")
     sys.argv = ["preprocess"]
     if args.config:
         sys.argv.extend(["--config", args.config])
@@ -35,40 +34,34 @@ def run_preprocess(args):
         sys.argv.append("--force-full")
 
     preprocess_main()
-    logger.info("Preprocessing complete!")
 
 
 def run_backtest(args):
     """Run historical backtest."""
     from src.cli.backtest import main as backtest_main
 
-    logger.info("Running backtest...")
     sys.argv = ["backtest"]
     if args.config:
         sys.argv.extend(["--config", args.config])
 
     backtest_main()
-    logger.info("Backtest complete!")
 
 
 def run_gridsearch(args):
     """Run parameter grid search."""
     from src.cli.gridsearch import main as gridsearch_main
 
-    logger.info("Running grid search...")
     sys.argv = ["gridsearch"]
     if args.config:
         sys.argv.extend(["--config", args.config])
 
     gridsearch_main()
-    logger.info("Grid search complete!")
 
 
 def run_live_signals(args):
     """Generate live trading signals."""
     from src.cli.live_daily import main as live_daily_main
 
-    logger.info("Generating live signals...")
     sys.argv = ["live_daily"]
     if args.config:
         sys.argv.extend(["--config", args.config])
@@ -76,40 +69,34 @@ def run_live_signals(args):
         sys.argv.extend(["--date", args.date])
 
     live_daily_main()
-    logger.info("Live signals generated!")
 
 
 def run_paper_trade(args):
     """Run paper trading simulation."""
     from src.cli.paper_trade_daily import main as paper_trade_main
 
-    logger.info("Running paper trading...")
     sys.argv = ["paper_trade_daily"]
     if args.config:
         sys.argv.extend(["--config", args.config])
 
     paper_trade_main()
-    logger.info("Paper trading complete!")
 
 
 def run_multi_strategy(args):
     """Run multi-strategy paper trading."""
     from src.cli.run_multi_strategy_paper_trading import main as multi_strategy_main
 
-    logger.info("Running multi-strategy paper trading...")
     sys.argv = ["run_multi_strategy_paper_trading"]
     if args.config:
         sys.argv.extend(["--config", args.config])
 
     multi_strategy_main()
-    logger.info("Multi-strategy paper trading complete!")
 
 
 def run_daily(args):
     """Run daily trading workflow (signals + monitoring + closing)."""
     from src.cli.daily_runner import main as daily_runner_main
 
-    logger.info("Running daily workflow...")
     sys.argv = ["daily_runner"]
     if args.config:
         sys.argv.extend(["--config", args.config])
@@ -123,14 +110,12 @@ def run_daily(args):
         sys.argv.append("--skip-close")
 
     daily_runner_main()
-    logger.info("Daily workflow complete!")
 
 
 def run_api(args):
     """Start FastAPI server."""
     import uvicorn
 
-    logger.info(f"Starting FastAPI server on {args.host}:{args.port}...")
     uvicorn.run(
         "src.api.main:app",
         host=args.host,
@@ -210,7 +195,6 @@ def main():
     try:
         commands[args.command](args)
     except KeyboardInterrupt:
-        logger.info("Interrupted by user")
         sys.exit(0)
     except Exception as e:
         logger.error(f"Error running {args.command}: {e}")

@@ -186,12 +186,12 @@ def generate_comparison_report(summaries: list[dict]) -> None:
     comparison_df = comparison_df.sort_values('total_return_pct', ascending=False)
 
     # Display formatted table
-    print(f"\n{'Strategy':<20} {'Return %':<12} {'P&L':<15} {'Positions':<12} {'Trades':<10} {'Win Rate':<10}")
-    print("-" * 80)
+    logger.info(f"\n{'Strategy':<20} {'Return %':<12} {'P&L':<15} {'Positions':<12} {'Trades':<10} {'Win Rate':<10}")
+    logger.info("-" * 80)
 
     for _, row in comparison_df.iterrows():
         win_rate = f"{row.get('win_rate', 0)*100:.1f}%" if 'win_rate' in row and row.get('num_closed_trades', 0) > 0 else "N/A"
-        print(f"{row['strategy']:<20} {row['total_return_pct']:>10.2f}% ${row['total_pnl']:>13,.2f} "
+        logger.info(f"{row['strategy']:<20} {row['total_return_pct']:>10.2f}% ${row['total_pnl']:>13,.2f} "
               f"{row['num_open_positions']:>11} {row['num_closed_trades']:>9} {win_rate:>9}")
 
     # Save comparison to CSV
