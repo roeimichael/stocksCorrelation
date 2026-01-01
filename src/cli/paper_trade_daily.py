@@ -13,7 +13,6 @@ from src.core.config import load_config
 from src.core.constants import Paths, TradingConstants
 from src.core.data_loader import load_returns, load_windows
 from src.core.logger import get_logger
-from src.dataio.live_append import append_latest_data
 from src.modeling.similarity import rank_analogs
 from src.modeling.vote import vote
 from src.modeling.windows import build_windows, normalize_window
