@@ -88,4 +88,4 @@ async def global_exception_handler(request, exc):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="error")
+    uvicorn.run(app, host="127.0.0.1", port=8084, log_level="error")

@@ -9,9 +9,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-API available at: **http://localhost:8080**
+API available at: **http://localhost:8084**
 
-Documentation: **http://localhost:8080/docs**
+Documentation: **http://localhost:8084/docs**
 
 ## API Endpoints
 
@@ -63,7 +63,7 @@ All operations are controlled through the API. No CLI commands.
 
 ### Start a Backtest
 ```bash
-curl -X POST http://localhost:8080/api/operations/backtest \
+curl -X POST http://localhost:8084/api/operations/backtest \
   -H "Content-Type: application/json" \
   -d '{"config": "config.yaml"}'
 
@@ -72,21 +72,21 @@ curl -X POST http://localhost:8080/api/operations/backtest \
 
 ### Check Task Status
 ```bash
-curl http://localhost:8080/api/operations/status/backtest_20250101_120000
+curl http://localhost:8084/api/operations/status/backtest_20250101_120000
 
 # Response: {"status": "completed", "started_at": "...", "completed_at": "..."}
 ```
 
 ### View Positions
 ```bash
-curl http://localhost:8080/api/positions?sort_by=pnl
+curl http://localhost:8084/api/positions?sort_by=pnl
 
 # Returns all positions sorted by P&L
 ```
 
 ### WebSocket Real-time Updates
 ```javascript
-const ws = new WebSocket('ws://localhost:8080/api/monitoring/ws');
+const ws = new WebSocket('ws://localhost:8084/api/monitoring/ws');
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   console.log('Update:', data);
