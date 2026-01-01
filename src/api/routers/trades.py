@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
 
-from api.services.trades_service import TradesService
+from src.api.services.trades_service import TradesService
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)

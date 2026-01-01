@@ -16,11 +16,11 @@ from pathlib import Path
 import sys
 
 # Add project root to path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.core.logger import get_logger
-from api.routers import (
+from src.api.routers import (
     positions,
     correlations,
     trades,

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Query, HTTPException, Path
 
-from api.services.signals_service import SignalsService
+from src.api.services.signals_service import SignalsService
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
 
-from api.services.positions_service import PositionsService
+from src.api.services.positions_service import PositionsService
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)

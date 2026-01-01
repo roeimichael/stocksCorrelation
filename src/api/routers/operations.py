@@ -95,7 +95,7 @@ async def run_daily_workflow(request: DailyRunRequest, background_tasks: Backgro
     """
     try:
         # Build command
-        command = ["python", "run.py", "daily", "--config", request.config]
+        command = ["python", "-m", "src.run", "daily", "--config", request.config]
 
         if request.date:
             command.extend(["--date", request.date])
@@ -132,7 +132,7 @@ async def run_backtest(request: BacktestRequest, background_tasks: BackgroundTas
     Operation runs in the background and returns a task ID for status tracking.
     """
     try:
-        command = ["python", "run.py", "backtest", "--config", request.config]
+        command = ["python", "-m", "src.run", "backtest", "--config", request.config]
 
         task_id = f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         background_tasks.add_task(run_command_background, task_id, command)
@@ -158,7 +158,7 @@ async def run_gridsearch(request: GridSearchRequest, background_tasks: Backgroun
     Operation runs in the background and returns a task ID for status tracking.
     """
     try:
-        command = ["python", "run.py", "gridsearch", "--config", request.config]
+        command = ["python", "-m", "src.run", "gridsearch", "--config", request.config]
 
         task_id = f"gridsearch_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         background_tasks.add_task(run_command_background, task_id, command)
@@ -184,7 +184,7 @@ async def run_preprocess(request: PreprocessRequest, background_tasks: Backgroun
     Operation runs in the background and returns a task ID for status tracking.
     """
     try:
-        command = ["python", "run.py", "preprocess", "--config", request.config]
+        command = ["python", "-m", "src.run", "preprocess", "--config", request.config]
 
         if request.force_full:
             command.append("--force-full")

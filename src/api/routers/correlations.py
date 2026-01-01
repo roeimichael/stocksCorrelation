@@ -4,8 +4,8 @@ from fastapi import APIRouter, Query, HTTPException, Body
 from typing import Optional, List
 import json
 
-from api.services.correlations_service import CorrelationsService
-from api.services.positions_service import PositionsService
+from src.api.services.correlations_service import CorrelationsService
+from src.api.services.positions_service import PositionsService
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)

@@ -5,7 +5,7 @@ from typing import Optional, List
 import asyncio
 import json
 
-from api.services.monitoring_service import MonitoringService
+from src.api.services.monitoring_service import MonitoringService
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)
