@@ -3,6 +3,11 @@
 
 if __name__ == "__main__":
     import uvicorn
+    print("Starting API server...")
+    print("API: http://localhost:8080")
+    print("Docs: http://localhost:8080/docs")
+    print("Press Ctrl+C to stop")
+    print("-" * 40)
     uvicorn.run(
         "src.api.main:app",
         host="127.0.0.1",
