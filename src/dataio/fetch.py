@@ -124,19 +124,23 @@ def fetch_prices(symbols: list[str], cfg: dict) -> None:
             try:
                 logger.debug(f"Downloading {symbol} (attempt {attempt + 1}/{max_retries})")
 
-                ticker = yf.Ticker(symbol)
-                data = ticker.history(
+                # Try using yf.download() which is more reliable for recent API versions
+                logger.debug(f"Fetching {symbol}: {start_date} to {end_date}")
+                data = yf.download(
+                    symbol,
                     start=start_date,
                     end=end_date,
                     interval=interval,
-                    auto_adjust=False,
-                    actions=False
+                    progress=False,
+                    show_errors=False
                 )
 
                 if data.empty:
-                    logger.warning(f"No data returned for {symbol}")
+                    logger.warning(f"No data returned for {symbol} (dates: {start_date} to {end_date})")
                     fail_count += 1
                     break
+
+                logger.debug(f"{symbol}: Retrieved {len(data)} rows")
 
                 # Ensure we have the required columns
                 required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
