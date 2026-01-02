@@ -206,7 +206,8 @@ def generate_comparison_report(summaries: list[dict]) -> None:
     logger.info(f"   P&L: ${best_strategy['total_pnl']:,.2f}")
 
 
-if __name__ == '__main__':
+def main():
+    """Main entry point for multi-strategy paper trading."""
     try:
         logger.info("Starting multi-strategy paper trading...")
 
@@ -227,3 +228,7 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Multi-strategy paper trading failed: {e}")
         raise
+
+
+if __name__ == '__main__':
+    main()
