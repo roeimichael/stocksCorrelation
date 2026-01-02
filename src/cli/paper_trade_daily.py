@@ -251,7 +251,8 @@ def save_trades_log(portfolio: PaperTradingPortfolio, today: str) -> None:
         logger.info(f"Saved {len(positions_df)} open positions to {positions_file}")
 
 
-if __name__ == '__main__':
+def main():
+    """Main entry point for paper trading."""
     try:
         cfg = load_config()
         run_daily_paper_trading(cfg)
@@ -259,3 +260,7 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Paper trading failed: {e}")
         raise
+
+
+if __name__ == '__main__':
+    main()
