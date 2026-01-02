@@ -1,5 +1,6 @@
 """Fetch stock data from external sources."""
 import time
+from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
